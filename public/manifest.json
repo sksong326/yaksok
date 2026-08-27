@@ -1,0 +1,13 @@
+{
+  "name": "약속 - 가족 복약 알림",
+  "short_name": "약속",
+  "description": "가족의 복약 시간을 챙기는 알림 앱",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#F4F7F3",
+  "theme_color": "#2F6F62",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}

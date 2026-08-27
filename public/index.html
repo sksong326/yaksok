@@ -50,6 +50,27 @@
       </section>
 
       <section class="section">
+        <h2 class="section-title">이 음식 먹어도 될까?</h2>
+        <p id="dietSelectMsg" class="muted-text hidden">먼저 위에서 가족 구성원을 선택하세요.</p>
+        <div id="dietAskBox" class="hidden">
+          <div class="time-add-row">
+            <input id="dietAskInput" class="field-input" placeholder="예: 자몽, 바나나, 짠 음식" />
+            <button id="dietAskBtn" class="btn-pill btn-primary">물어보기</button>
+          </div>
+          <div id="dietAskResult" class="diet-answer hidden"></div>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="section-header-row">
+          <h2 class="section-title">식단 목록 관리</h2>
+          <button id="addDietBtn" class="btn-pill btn-primary hidden">+ 음식 추가</button>
+        </div>
+        <p id="dietListSelectMsg" class="muted-text hidden">식단 목록을 등록하려면 위에서 가족 구성원을 선택하세요.</p>
+        <div id="dietList" class="meds-list"></div>
+      </section>
+
+      <section class="section">
         <div class="section-header-row">
           <h2 class="section-title">복약 관리</h2>
           <button id="addMedBtn" class="btn-pill btn-primary hidden">+ 약 추가</button>
@@ -99,6 +120,26 @@
       <div id="medDaysRow" class="days-row"></div>
 
       <button id="medSaveBtn" class="btn-pill btn-primary btn-block mt">저장하기</button>
+    </div>
+  </div>
+
+  <!-- 음식 추가/수정 모달 -->
+  <div id="dietModal" class="modal-overlay hidden">
+    <div class="modal-shell">
+      <div class="modal-head">
+        <h3 id="dietModalTitle">음식 추가</h3>
+        <button class="icon-btn" data-close-modal="dietModal">✕</button>
+      </div>
+      <label class="field-label">음식 이름</label>
+      <input id="dietNameInput" class="field-input" placeholder="예: 자몽, 바나나, 짠 음식" />
+
+      <label class="field-label mt">상태</label>
+      <div id="dietStatusRow" class="days-row"></div>
+
+      <label class="field-label mt">메모 (선택)</label>
+      <input id="dietNoteInput" class="field-input" placeholder="예: 하루 1개까지 괜찮음, 약사님이 절대 금지라고 함" />
+
+      <button id="dietSaveBtn" class="btn-pill btn-primary btn-block mt">저장하기</button>
     </div>
   </div>
 

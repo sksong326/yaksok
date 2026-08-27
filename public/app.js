@@ -1,9 +1,14 @@
 const WEEKDAYS = ['일', '월', '화', '수', '목', '금', '토'];
 const PATIENT_COLORS = ['#2F6F62', '#E8A33D', '#D9645B', '#5B7FBF', '#8B6FB3', '#3F9B7A', '#C77DAA'];
 
-let state = { patients: [], medications: [], logs: {} };
+let state = { patients: [], medications: [], logs: {}, diets: [] };
 let activeTab = 'all';
 let editingMedId = null;
+let editingDietId = null;
+let dietStatusDraft = 'ok';
+
+const STATUS_LABEL = { ok: '먹어도 돼요', caution: '주의해서 조금만', avoid: '먹으면 안 돼요' };
+const STATUS_ICON = { ok: '✅', caution: '⚠️', avoid: '⛔' };
 
 function pad(n) { return String(n).padStart(2, '0'); }
 function dateKey(d) { return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; }
@@ -34,6 +39,7 @@ function render() {
   if (!hasPatients) return;
   renderToday();
   renderWeek();
+  renderDiet();
   renderMeds();
   renderDeleteBtn();
 }
@@ -202,6 +208,151 @@ function renderWeek() {
     card.appendChild(grid);
     wrap.appendChild(card);
   });
+}
+
+// ---------------- 식단(음식) ----------------
+function renderDiet() {
+  const askBox = document.getElementById('dietAskBox');
+  const askMsg = document.getElementById('dietSelectMsg');
+  const addBtn = document.getElementById('addDietBtn');
+  const listMsg = document.getElementById('dietListSelectMsg');
+  const list = document.getElementById('dietList');
+
+  if (activeTab === 'all') {
+    askBox.classList.add('hidden');
+    askMsg.classList.remove('hidden');
+    addBtn.classList.add('hidden');
+    listMsg.classList.remove('hidden');
+    list.innerHTML = '';
+    return;
+  }
+  askBox.classList.remove('hidden');
+  askMsg.classList.add('hidden');
+  addBtn.classList.remove('hidden');
+  listMsg.classList.add('hidden');
+
+  document.getElementById('dietAskResult').classList.add('hidden');
+  document.getElementById('dietAskInput').value = '';
+
+  const items = state.diets.filter((d) => d.patientId === activeTab);
+  list.innerHTML = '';
+  if (items.length === 0) {
+    const p = document.createElement('p');
+    p.className = 'muted-text';
+    p.textContent = '등록된 음식이 없어요. "음식 추가"로 먹어도 되는 것/안 되는 것을 등록해두세요.';
+    list.appendChild(p);
+    return;
+  }
+  items.forEach((item) => {
+    const row = document.createElement('div');
+    row.className = 'med-item';
+    const info = document.createElement('div');
+    info.className = 'diet-item-row';
+    info.innerHTML = `
+      <span class="diet-status-dot" style="background:${statusColor(item.status)}"></span>
+      <div>
+        <p class="med-item-name">${escapeHtml(item.name)} <span class="diet-answer-status ${item.status}" style="margin-left:6px">${STATUS_LABEL[item.status]}</span></p>
+        ${item.note ? `<p class="med-item-days">${escapeHtml(item.note)}</p>` : ''}
+      </div>
+    `;
+    const actions = document.createElement('div');
+    actions.className = 'med-item-actions';
+    const editBtn = document.createElement('button');
+    editBtn.className = 'btn-pill btn-small btn-outline';
+    editBtn.textContent = '수정';
+    editBtn.onclick = () => openDietModal(item);
+    const delBtn = document.createElement('button');
+    delBtn.className = 'danger-btn';
+    delBtn.textContent = '🗑';
+    delBtn.onclick = () => removeDiet(item.id);
+    actions.appendChild(editBtn);
+    actions.appendChild(delBtn);
+    row.appendChild(info);
+    row.appendChild(actions);
+    list.appendChild(row);
+  });
+}
+
+function statusColor(status) {
+  return status === 'ok' ? 'var(--primary)' : status === 'caution' ? 'var(--accent)' : 'var(--danger)';
+}
+
+function askDiet() {
+  const q = document.getElementById('dietAskInput').value.trim();
+  const resultBox = document.getElementById('dietAskResult');
+  if (!q) return;
+  const items = state.diets.filter((d) => d.patientId === activeTab);
+  const norm = (s) => s.replace(/\s/g, '').toLowerCase();
+  const nq = norm(q);
+  const matches = items.filter((d) => {
+    const nn = norm(d.name);
+    return nn.includes(nq) || nq.includes(nn);
+  });
+
+  resultBox.classList.remove('hidden');
+  if (matches.length === 0) {
+    resultBox.innerHTML = `
+      <div class="diet-answer-item">
+        <span class="diet-answer-icon">🤔</span>
+        <div class="diet-answer-body">
+          <p class="diet-answer-name">"${escapeHtml(q)}"에 대한 정보가 아직 없어요</p>
+          <p class="diet-answer-note">아래 "식단 목록 관리"에서 등록해두시면 다음부턴 바로 답해드려요. 확실하지 않으면 담당 의사·약사님께 확인해보세요.</p>
+        </div>
+      </div>`;
+    return;
+  }
+  resultBox.innerHTML = matches.map((m) => `
+    <div class="diet-answer-item">
+      <span class="diet-answer-icon">${STATUS_ICON[m.status]}</span>
+      <div class="diet-answer-body">
+        <p class="diet-answer-name">${escapeHtml(m.name)}</p>
+        <p class="diet-answer-status ${m.status}">${STATUS_LABEL[m.status]}</p>
+        ${m.note ? `<p class="diet-answer-note">${escapeHtml(m.note)}</p>` : ''}
+      </div>
+    </div>
+  `).join('');
+}
+
+function openDietModal(item) {
+  editingDietId = item ? item.id : null;
+  document.getElementById('dietModalTitle').textContent = item ? '음식 정보 수정' : '음식 추가';
+  document.getElementById('dietNameInput').value = item ? item.name : '';
+  document.getElementById('dietNoteInput').value = item ? item.note : '';
+  dietStatusDraft = item ? item.status : 'ok';
+  renderDietStatusToggles();
+  document.getElementById('dietModal').classList.remove('hidden');
+}
+function renderDietStatusToggles() {
+  const wrap = document.getElementById('dietStatusRow');
+  wrap.innerHTML = '';
+  ['ok', 'caution', 'avoid'].forEach((s) => {
+    const btn = document.createElement('button');
+    btn.className = 'status-toggle' + (dietStatusDraft === s ? ` active-${s}` : '');
+    btn.textContent = `${STATUS_ICON[s]} ${STATUS_LABEL[s]}`;
+    btn.onclick = () => { dietStatusDraft = s; renderDietStatusToggles(); };
+    wrap.appendChild(btn);
+  });
+}
+async function saveDiet() {
+  const name = document.getElementById('dietNameInput').value.trim();
+  const note = document.getElementById('dietNoteInput').value.trim();
+  if (!name) { alert('음식 이름을 입력해주세요.'); return; }
+  const payload = { patientId: activeTab, name, status: dietStatusDraft, note };
+  if (editingDietId) {
+    const updated = await api(`/api/diets/${editingDietId}`, { method: 'PUT', body: JSON.stringify(payload) });
+    state.diets = state.diets.map((d) => (d.id === editingDietId ? updated : d));
+  } else {
+    const created = await api('/api/diets', { method: 'POST', body: JSON.stringify(payload) });
+    state.diets.push(created);
+  }
+  closeModal('dietModal');
+  render();
+}
+async function removeDiet(id) {
+  if (!confirm('이 음식 정보를 삭제할까요?')) return;
+  await api(`/api/diets/${id}`, { method: 'DELETE' });
+  state.diets = state.diets.filter((d) => d.id !== id);
+  render();
 }
 
 function renderMeds() {
@@ -406,6 +557,10 @@ document.getElementById('medTimeAddBtn').onclick = () => {
   if (t && !medTimesDraft.includes(t)) { medTimesDraft.push(t); medTimesDraft.sort(); renderTimeChips(); }
 };
 document.getElementById('medSaveBtn').onclick = saveMed;
+document.getElementById('dietAskBtn').onclick = askDiet;
+document.getElementById('dietAskInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') askDiet(); });
+document.getElementById('addDietBtn').onclick = () => openDietModal(null);
+document.getElementById('dietSaveBtn').onclick = saveDiet;
 document.querySelectorAll('[data-close-modal]').forEach((btn) => {
   btn.onclick = () => closeModal(btn.getAttribute('data-close-modal'));
 });

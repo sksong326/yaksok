@@ -19,10 +19,12 @@ webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
 
 // ---- 아주 단순한 파일 기반 저장소 ----
 function loadData() {
+  const fallback = { patients: [], medications: [], logs: {}, subscriptions: [], diets: [] };
   try {
-    return JSON.parse(fs.readFileSync(DATA_FILE, 'utf-8'));
+    const parsed = JSON.parse(fs.readFileSync(DATA_FILE, 'utf-8'));
+    return { ...fallback, ...parsed };
   } catch (e) {
-    return { patients: [], medications: [], logs: {}, subscriptions: [] };
+    return fallback;
   }
 }
 function saveData(data) {
@@ -119,6 +121,36 @@ app.post('/api/logs/toggle', (req, res) => {
   else data.logs[key] = true;
   saveData(data);
   res.json({ key, taken: !!data.logs[key] });
+});
+
+// ---- 식단(음식 허용/금지) 목록 ----
+// status: 'ok' (먹어도 됨) | 'caution' (주의) | 'avoid' (금지)
+app.post('/api/diets', (req, res) => {
+  const data = loadData();
+  const { patientId, name, status, note } = req.body;
+  if (!patientId || !name || !['ok', 'caution', 'avoid'].includes(status)) {
+    return res.status(400).json({ error: 'invalid diet item' });
+  }
+  const item = { id: uid('d'), patientId, name: name.trim(), status, note: (note || '').trim() };
+  data.diets.push(item);
+  saveData(data);
+  res.json(item);
+});
+
+app.put('/api/diets/:id', (req, res) => {
+  const data = loadData();
+  const idx = data.diets.findIndex((d) => d.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: 'not found' });
+  data.diets[idx] = { ...data.diets[idx], ...req.body, id: req.params.id };
+  saveData(data);
+  res.json(data.diets[idx]);
+});
+
+app.delete('/api/diets/:id', (req, res) => {
+  const data = loadData();
+  data.diets = data.diets.filter((d) => d.id !== req.params.id);
+  saveData(data);
+  res.json({ ok: true });
 });
 
 // ---- 푸시 구독 ----

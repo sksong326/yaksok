@@ -96,6 +96,29 @@ app.post('/api/medications', (req, res) => {
   res.json(med);
 });
 
+// ---- 복약 일정: 시간대별 여러 약 한번에 등록 ----
+app.post('/api/medications/bulk', (req, res) => {
+  const data = loadData();
+  const { patientId, time, days, items } = req.body;
+  if (!patientId || !time || !Array.isArray(items) || items.length === 0) {
+    return res.status(400).json({ error: 'invalid bulk medication' });
+  }
+  const finalDays = days && days.length ? days : [0, 1, 2, 3, 4, 5, 6];
+  const created = items
+    .filter((it) => it.name && it.name.trim())
+    .map((it) => ({
+      id: uid('m'),
+      patientId,
+      name: it.name.trim(),
+      dosage: (it.dosage || '').trim(),
+      times: [time],
+      days: finalDays,
+    }));
+  data.medications.push(...created);
+  saveData(data);
+  res.json(created);
+});
+
 app.put('/api/medications/:id', (req, res) => {
   const data = loadData();
   const idx = data.medications.findIndex((m) => m.id === req.params.id);

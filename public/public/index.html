@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1" />
+<title>약속 - 가족 복약 알림</title>
+<link rel="manifest" href="/manifest.json" />
+<link rel="icon" href="/icon-192.png" />
+<meta name="theme-color" content="#2F6F62" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div id="alarmBanner" class="alarm-banner hidden"></div>
+
+  <header class="app-header">
+    <div class="app-header-row">
+      <div>
+        <h1 class="app-title">약<span class="accent-ink">속</span></h1>
+        <p class="app-subtitle">가족과의 약속, 오늘도 지켜요</p>
+      </div>
+      <button id="notifBtn" class="btn-pill btn-outline">알림 켜기</button>
+    </div>
+    <p class="hint-text">알림을 켜면 폰이 꺼져 있어도 시간에 맞춰 알려드려요.</p>
+  </header>
+
+  <nav id="tabs" class="tabs"></nav>
+
+  <main class="app-main">
+    <div id="emptyState" class="empty-state hidden">
+      <div class="empty-card">
+        <p class="empty-icon">💊</p>
+        <h3 class="empty-title">첫 가족 구성원을 등록해보세요</h3>
+        <p class="empty-desc">가족을 추가하면 그 사람의 약속(복약) 시간을 정하고, 매일 체크할 수 있어요.</p>
+        <button id="emptyAddBtn" class="btn-pill btn-primary">가족 추가하기</button>
+      </div>
+    </div>
+
+    <div id="mainContent" class="hidden">
+      <section class="section">
+        <h2 class="section-title">오늘의 약속</h2>
+        <ul id="todayList" class="today-list"></ul>
+        <p id="todayEmptyMsg" class="muted-text hidden"></p>
+      </section>
+
+      <section class="section">
+        <h2 class="section-title">이번 주 약속</h2>
+        <div id="weekList" class="week-list"></div>
+      </section>
+
+      <section class="section">
+        <h2 class="section-title">이 음식 먹어도 될까?</h2>
+        <p id="dietSelectMsg" class="muted-text hidden">먼저 위에서 가족 구성원을 선택하세요.</p>
+        <div id="dietAskBox" class="hidden">
+          <div class="time-add-row">
+            <input id="dietAskInput" class="field-input" placeholder="예: 자몽, 바나나, 짠 음식" />
+            <button id="dietAskBtn" class="btn-pill btn-primary">물어보기</button>
+          </div>
+          <div id="dietAskResult" class="diet-answer hidden"></div>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="section-header-row">
+          <h2 class="section-title">식단 목록 관리</h2>
+          <button id="addDietBtn" class="btn-pill btn-primary hidden">+ 음식 추가</button>
+        </div>
+        <p id="dietListSelectMsg" class="muted-text hidden">식단 목록을 등록하려면 위에서 가족 구성원을 선택하세요.</p>
+        <div id="dietList" class="meds-list"></div>
+      </section>
+
+      <section class="section">
+        <div class="section-header-row">
+          <h2 class="section-title">복약 관리</h2>
+          <button id="addMedBtn" class="btn-pill btn-primary hidden">+ 약 추가</button>
+        </div>
+        <p id="medsSelectMsg" class="muted-text hidden">약을 등록하거나 수정하려면 위에서 가족 구성원을 선택하세요.</p>
+        <div id="medsList" class="meds-list"></div>
+      </section>
+
+      <button id="deletePatientBtn" class="link-btn hidden"></button>
+    </div>
+  </main>
+
+  <!-- 가족 추가 모달 -->
+  <div id="patientModal" class="modal-overlay hidden">
+    <div class="modal-shell">
+      <div class="modal-head">
+        <h3>가족 구성원 추가</h3>
+        <button class="icon-btn" data-close-modal="patientModal">✕</button>
+      </div>
+      <label class="field-label">이름 또는 호칭</label>
+      <input id="patientNameInput" class="field-input" placeholder="예: 어머니, 아버지, 민준" />
+      <button id="patientSaveBtn" class="btn-pill btn-primary btn-block">추가하기</button>
+    </div>
+  </div>
+
+  <!-- 약 추가/수정 모달 -->
+  <div id="medModal" class="modal-overlay hidden">
+    <div class="modal-shell">
+      <div class="modal-head">
+        <h3 id="medModalTitle">약 추가</h3>
+        <button class="icon-btn" data-close-modal="medModal">✕</button>
+      </div>
+      <label class="field-label">약 이름</label>
+      <input id="medNameInput" class="field-input" placeholder="예: 혈압약" />
+
+      <label class="field-label mt">복용량 / 메모 (선택)</label>
+      <input id="medDosageInput" class="field-input" placeholder="예: 1정, 식후 30분" />
+
+      <label class="field-label mt">복용 시간</label>
+      <div class="time-add-row">
+        <input id="medTimeInput" type="time" class="field-input time-input" value="08:00" />
+        <button id="medTimeAddBtn" class="btn-pill btn-primary">추가</button>
+      </div>
+      <div id="medTimesChips" class="chips-row"></div>
+
+      <label class="field-label mt">요일</label>
+      <div id="medDaysRow" class="days-row"></div>
+
+      <button id="medSaveBtn" class="btn-pill btn-primary btn-block mt">저장하기</button>
+    </div>
+  </div>
+
+  <!-- 음식 추가/수정 모달 -->
+  <div id="dietModal" class="modal-overlay hidden">
+    <div class="modal-shell">
+      <div class="modal-head">
+        <h3 id="dietModalTitle">음식 추가</h3>
+        <button class="icon-btn" data-close-modal="dietModal">✕</button>
+      </div>
+      <label class="field-label">음식 이름</label>
+      <input id="dietNameInput" class="field-input" placeholder="예: 자몽, 바나나, 짠 음식" />
+
+      <label class="field-label mt">상태</label>
+      <div id="dietStatusRow" class="days-row"></div>
+
+      <label class="field-label mt">메모 (선택)</label>
+      <input id="dietNoteInput" class="field-input" placeholder="예: 하루 1개까지 괜찮음, 약사님이 절대 금지라고 함" />
+
+      <button id="dietSaveBtn" class="btn-pill btn-primary btn-block mt">저장하기</button>
+    </div>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

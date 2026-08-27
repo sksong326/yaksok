@@ -103,6 +103,14 @@ body {
 .day-toggle.active { background: var(--primary); color: #fff; }
 .mt { margin-top: 16px; }
 
+.mt-sm { margin-top: 8px; }
+.bulk-items-list { margin-top: 8px; display: flex; flex-direction: column; gap: 8px; }
+.bulk-item-row { display: flex; gap: 8px; align-items: center; }
+.bulk-item-row .field-input { margin-top: 0; }
+.bulk-item-name { flex: 2; }
+.bulk-item-dosage { flex: 1; }
+.bulk-item-remove { background: none; border: none; color: var(--ink-soft); font-size: 1rem; cursor: pointer; flex-shrink: 0; padding: 4px; }
+
 .diet-answer { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; }
 .diet-answer-item { display: flex; align-items: flex-start; gap: 10px; border-radius: 16px; padding: 14px 16px; border: 1px solid var(--line); background: var(--surface); }
 .diet-answer-icon { font-size: 1.3rem; line-height: 1; flex-shrink: 0; }

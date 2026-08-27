@@ -96,6 +96,29 @@
     </div>
   </div>
 
+  <!-- 시간대별 여러 약 한번에 등록 모달 -->
+  <div id="bulkMedModal" class="modal-overlay hidden">
+    <div class="modal-shell">
+      <div class="modal-head">
+        <h3>약 등록</h3>
+        <button class="icon-btn" data-close-modal="bulkMedModal">✕</button>
+      </div>
+      <p class="muted-text" style="margin-top:0">한 시간에 여러 약을 같이 드신다면, 한 번에 다 등록해두세요. 체크는 나중에 각각 따로 할 수 있어요.</p>
+
+      <label class="field-label mt">복용 시간</label>
+      <input id="bulkTimeInput" type="time" class="field-input time-input" value="08:00" />
+
+      <label class="field-label mt">요일</label>
+      <div id="bulkDaysRow" class="days-row"></div>
+
+      <label class="field-label mt">이 시간에 먹는 약들</label>
+      <div id="bulkItemsList" class="bulk-items-list"></div>
+      <button id="bulkAddRowBtn" class="btn-pill btn-outline btn-block mt-sm">+ 약 한 줄 추가</button>
+
+      <button id="bulkSaveBtn" class="btn-pill btn-primary btn-block mt">저장하기</button>
+    </div>
+  </div>
+
   <!-- 약 추가/수정 모달 -->
   <div id="medModal" class="modal-overlay hidden">
     <div class="modal-shell">

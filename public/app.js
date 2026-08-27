@@ -6,6 +6,8 @@ let activeTab = 'all';
 let editingMedId = null;
 let editingDietId = null;
 let dietStatusDraft = 'ok';
+let bulkDaysDraft = [0, 1, 2, 3, 4, 5, 6];
+let bulkItemsDraft = [];
 
 const STATUS_LABEL = { ok: '먹어도 돼요', caution: '주의해서 조금만', avoid: '먹으면 안 돼요' };
 const STATUS_ICON = { ok: '✅', caution: '⚠️', avoid: '⛔' };
@@ -355,6 +357,68 @@ async function removeDiet(id) {
   render();
 }
 
+// ---------------- 시간대별 여러 약 한번에 등록 ----------------
+function openBulkMedModal() {
+  document.getElementById('bulkTimeInput').value = '08:00';
+  bulkDaysDraft = [0, 1, 2, 3, 4, 5, 6];
+  bulkItemsDraft = [{ name: '', dosage: '' }, { name: '', dosage: '' }];
+  renderBulkDays();
+  renderBulkItems();
+  document.getElementById('bulkMedModal').classList.remove('hidden');
+}
+function renderBulkDays() {
+  const wrap = document.getElementById('bulkDaysRow');
+  wrap.innerHTML = '';
+  WEEKDAYS.forEach((w, i) => {
+    const btn = document.createElement('button');
+    btn.className = 'day-toggle' + (bulkDaysDraft.includes(i) ? ' active' : '');
+    btn.textContent = w;
+    btn.onclick = () => {
+      bulkDaysDraft = bulkDaysDraft.includes(i) ? bulkDaysDraft.filter((x) => x !== i) : [...bulkDaysDraft, i].sort();
+      renderBulkDays();
+    };
+    wrap.appendChild(btn);
+  });
+}
+function renderBulkItems() {
+  const wrap = document.getElementById('bulkItemsList');
+  wrap.innerHTML = '';
+  bulkItemsDraft.forEach((item, idx) => {
+    const row = document.createElement('div');
+    row.className = 'bulk-item-row';
+    const nameInput = document.createElement('input');
+    nameInput.className = 'field-input bulk-item-name';
+    nameInput.placeholder = '약 이름 (예: 혈압약)';
+    nameInput.value = item.name;
+    nameInput.oninput = (e) => { bulkItemsDraft[idx].name = e.target.value; };
+    const dosageInput = document.createElement('input');
+    dosageInput.className = 'field-input bulk-item-dosage';
+    dosageInput.placeholder = '수량 (예: 1정)';
+    dosageInput.value = item.dosage;
+    dosageInput.oninput = (e) => { bulkItemsDraft[idx].dosage = e.target.value; };
+    const removeBtn = document.createElement('button');
+    removeBtn.className = 'bulk-item-remove';
+    removeBtn.textContent = '✕';
+    removeBtn.onclick = () => { bulkItemsDraft.splice(idx, 1); renderBulkItems(); };
+    row.appendChild(nameInput);
+    row.appendChild(dosageInput);
+    row.appendChild(removeBtn);
+    wrap.appendChild(row);
+  });
+}
+async function saveBulkMed() {
+  const time = document.getElementById('bulkTimeInput').value;
+  const items = bulkItemsDraft.filter((it) => it.name.trim());
+  if (!time || items.length === 0 || bulkDaysDraft.length === 0) {
+    alert('시간, 요일, 그리고 약 이름을 최소 1개는 입력해주세요.');
+    return;
+  }
+  const created = await api('/api/medications/bulk', { method: 'POST', body: JSON.stringify({ patientId: activeTab, time, days: bulkDaysDraft, items }) });
+  state.medications.push(...created);
+  closeModal('bulkMedModal');
+  render();
+}
+
 function renderMeds() {
   const addBtn = document.getElementById('addMedBtn');
   const selectMsg = document.getElementById('medsSelectMsg');
@@ -551,7 +615,7 @@ async function initPush() {
 // ---------------- 초기화 ----------------
 document.getElementById('emptyAddBtn').onclick = openPatientModal;
 document.getElementById('patientSaveBtn').onclick = savePatient;
-document.getElementById('addMedBtn').onclick = () => openMedModal(null);
+document.getElementById('addMedBtn').onclick = () => openBulkMedModal();
 document.getElementById('medTimeAddBtn').onclick = () => {
   const t = document.getElementById('medTimeInput').value;
   if (t && !medTimesDraft.includes(t)) { medTimesDraft.push(t); medTimesDraft.sort(); renderTimeChips(); }
@@ -561,6 +625,8 @@ document.getElementById('dietAskBtn').onclick = askDiet;
 document.getElementById('dietAskInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') askDiet(); });
 document.getElementById('addDietBtn').onclick = () => openDietModal(null);
 document.getElementById('dietSaveBtn').onclick = saveDiet;
+document.getElementById('bulkAddRowBtn').onclick = () => { bulkItemsDraft.push({ name: '', dosage: '' }); renderBulkItems(); };
+document.getElementById('bulkSaveBtn').onclick = saveBulkMed;
 document.querySelectorAll('[data-close-modal]').forEach((btn) => {
   btn.onclick = () => closeModal(btn.getAttribute('data-close-modal'));
 });

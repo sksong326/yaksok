@@ -1,7 +1,7 @@
 const WEEKDAYS = ['일', '월', '화', '수', '목', '금', '토'];
 const PATIENT_COLORS = ['#2F6F62', '#E8A33D', '#D9645B', '#5B7FBF', '#8B6FB3', '#3F9B7A', '#C77DAA'];
 
-let state = { patients: [], medications: [], logs: {}, diets: [] };
+let state = { patients: [], medications: [], logs: {}, diets: [], exercises: [] };
 let activeTab = 'all';
 let editingMedId = null;
 let editingDietId = null;
@@ -13,46 +13,6 @@ const STATUS_LABEL = { ok: '먹어도 돼요', caution: '주의해서 조금만'
 const STATUS_ICON = { ok: '✅', caution: '⚠️', avoid: '⛔' };
 
 function pad(n) { return String(n).padStart(2, '0'); }
-
-// ---- 식사 시간 기준 처리 (server.js와 동일한 로직) ----
-const MEAL_LABEL = { breakfast: '아침', lunch: '점심', dinner: '저녁' };
-const DEFAULT_MEAL_TIMES = { breakfast: '08:00', lunch: '12:30', dinner: '18:30', bedtime: '22:00' };
-
-function addMinutesToTime(hhmm, delta) {
-  const [h, m] = String(hhmm).split(':').map(Number);
-  let total = h * 60 + m + delta;
-  total = ((total % 1440) + 1440) % 1440;
-  return `${pad(Math.floor(total / 60))}:${pad(total % 60)}`;
-}
-function resolveTimeSpec(spec, mealTimes) {
-  const mt = { ...DEFAULT_MEAL_TIMES, ...(mealTimes || {}) };
-  if (/^\d{1,2}:\d{2}$/.test(spec)) return spec;
-  const m = spec.match(/^M:(breakfast|lunch|dinner):(before|after):(\d+)$/);
-  if (m) {
-    const base = mt[m[1]];
-    const delta = m[2] === 'before' ? -Number(m[3]) : Number(m[3]);
-    return addMinutesToTime(base, delta);
-  }
-  const b = spec.match(/^B:(\d+)$/);
-  if (b) return addMinutesToTime(mt.bedtime, -Number(b[1]));
-  return spec;
-}
-function describeTimeSpec(spec) {
-  if (/^\d{1,2}:\d{2}$/.test(spec)) return spec;
-  const m = spec.match(/^M:(breakfast|lunch|dinner):(before|after):(\d+)$/);
-  if (m) {
-    const label = MEAL_LABEL[m[1]];
-    const when = m[2] === 'before' ? '식전' : '식후';
-    const offset = Number(m[3]);
-    return offset > 0 ? `${label} ${when} ${offset}분` : `${label} ${when}`;
-  }
-  const b = spec.match(/^B:(\d+)$/);
-  if (b) {
-    const offset = Number(b[1]);
-    return offset > 0 ? `취침 ${offset}분 전` : '취침 전';
-  }
-  return spec;
-}
 function dateKey(d) { return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; }
 function nowHM() { const d = new Date(); return `${pad(d.getHours())}:${pad(d.getMinutes())}`; }
 function timeToMin(t) { const [h, m] = t.split(':').map(Number); return h * 60 + m; }
@@ -84,6 +44,8 @@ function render() {
   renderExcelSection();
   renderDiet();
   renderMeds();
+  renderExercises();
+  renderReminderSettings();
   renderDeleteBtn();
 }
 
@@ -121,15 +83,12 @@ function scheduleToday() {
     if (!med.days.includes(wd)) return;
     const patient = state.patients.find((p) => p.id === med.patientId);
     if (!patient) return;
-    const mealTimes = patient.mealTimes || DEFAULT_MEAL_TIMES;
-    med.times.forEach((spec) => {
-      const key = `${tKey}|${med.id}|${spec}`;
-      const clock = resolveTimeSpec(spec, mealTimes);
-      const label = describeTimeSpec(spec);
-      items.push({ key, time: spec, clock, label, medId: med.id, medName: med.name, dosage: med.dosage, patientId: patient.id, patientName: patient.name, color: patient.color, taken: !!state.logs[key] });
+    med.times.forEach((time) => {
+      const key = `${tKey}|${med.id}|${time}`;
+      items.push({ key, time, medId: med.id, medName: med.name, dosage: med.dosage, patientId: patient.id, patientName: patient.name, color: patient.color, taken: !!state.logs[key] });
     });
   });
-  items.sort((a, b) => timeToMin(a.clock) - timeToMin(b.clock));
+  items.sort((a, b) => timeToMin(a.time) - timeToMin(b.time));
   return items;
 }
 
@@ -165,7 +124,7 @@ function renderTodayItem(item) {
   main.className = 'today-item-main';
   const titleRow = document.createElement('div');
   titleRow.className = 'today-item-title-row';
-  const timeText = item.label !== item.clock ? `${item.clock} (${item.label})` : item.clock;
+  const timeText = item.time;
   titleRow.innerHTML = `<span class="time-mono">${escapeHtml(timeText)}</span><span>${escapeHtml(item.medName)}</span>` + (item.dosage ? `<span class="muted-text" style="margin:0">· ${escapeHtml(item.dosage)}</span>` : '');
   main.appendChild(titleRow);
   if (activeTab === 'all') {
@@ -176,7 +135,7 @@ function renderTodayItem(item) {
   }
   li.appendChild(main);
 
-  const isPast = timeToMin(item.clock) < timeToMin(nowHM());
+  const isPast = timeToMin(item.time) < timeToMin(nowHM());
   const status = item.taken ? 'taken' : isPast ? 'overdue' : 'upcoming';
   const badge = document.createElement('span');
   badge.className = 'badge badge-' + status;
@@ -634,7 +593,7 @@ function renderMeds() {
     const info = document.createElement('div');
     info.innerHTML = `
       <p class="med-item-name">${escapeHtml(m.name)}${m.dosage ? ' · ' + escapeHtml(m.dosage) : ''}</p>
-      <p class="med-item-times">${m.times.map(describeTimeSpec).join(', ')}</p>
+      <p class="med-item-times">${m.times.join(', ')}</p>
       <p class="med-item-days">${m.days.length === 7 ? '매일' : m.days.slice().sort().map((d) => WEEKDAYS[d]).join(' ')}</p>
     `;
     const actions = document.createElement('div');
@@ -653,6 +612,143 @@ function renderMeds() {
     row.appendChild(actions);
     list.appendChild(row);
   });
+}
+
+// ---------------- 운동 알림 (권고 - 반복 없음) ----------------
+let editingExerciseId = null;
+let exerciseTimesDraft = [];
+let exerciseDaysDraft = [0, 1, 2, 3, 4, 5, 6];
+
+function renderExercises() {
+  const addBtn = document.getElementById('addExerciseBtn');
+  const selectMsg = document.getElementById('exerciseSelectMsg');
+  const hint = document.getElementById('exerciseHint');
+  const list = document.getElementById('exerciseList');
+  list.innerHTML = '';
+
+  if (activeTab === 'all') {
+    addBtn.classList.add('hidden');
+    selectMsg.classList.remove('hidden');
+    hint.classList.add('hidden');
+    return;
+  }
+  addBtn.classList.remove('hidden');
+  selectMsg.classList.add('hidden');
+  hint.classList.remove('hidden');
+
+  const items = state.exercises.filter((e) => e.patientId === activeTab);
+  if (items.length === 0) {
+    const p = document.createElement('p');
+    p.className = 'muted-text';
+    p.textContent = '등록된 운동 알림이 없어요.';
+    list.appendChild(p);
+    return;
+  }
+  items.forEach((ex) => {
+    const row = document.createElement('div');
+    row.className = 'med-item';
+    const info = document.createElement('div');
+    info.innerHTML = `
+      <p class="med-item-name">🏃 ${escapeHtml(ex.name)}</p>
+      <p class="med-item-times">${ex.times.join(', ')}</p>
+      <p class="med-item-days">${ex.days.length === 7 ? '매일' : ex.days.slice().sort().map((d) => WEEKDAYS[d]).join(' ')}</p>
+    `;
+    const actions = document.createElement('div');
+    actions.className = 'med-item-actions';
+    const editBtn = document.createElement('button');
+    editBtn.className = 'btn-pill btn-small btn-outline';
+    editBtn.textContent = '수정';
+    editBtn.onclick = () => openExerciseModal(ex);
+    const delBtn = document.createElement('button');
+    delBtn.className = 'danger-btn';
+    delBtn.textContent = '🗑';
+    delBtn.onclick = () => removeExercise(ex.id);
+    actions.appendChild(editBtn);
+    actions.appendChild(delBtn);
+    row.appendChild(info);
+    row.appendChild(actions);
+    list.appendChild(row);
+  });
+}
+
+function openExerciseModal(ex) {
+  editingExerciseId = ex ? ex.id : null;
+  document.getElementById('exerciseModalTitle').textContent = ex ? '운동 정보 수정' : '운동 추가';
+  document.getElementById('exerciseNameInput').value = ex ? ex.name : '';
+  exerciseTimesDraft = ex ? [...ex.times] : [];
+  exerciseDaysDraft = ex ? [...ex.days] : [0, 1, 2, 3, 4, 5, 6];
+  renderExerciseTimeChips();
+  renderExerciseDayToggles();
+  document.getElementById('exerciseModal').classList.remove('hidden');
+}
+function renderExerciseTimeChips() {
+  const wrap = document.getElementById('exerciseTimesChips');
+  wrap.innerHTML = '';
+  exerciseTimesDraft.forEach((t) => {
+    const chip = document.createElement('span');
+    chip.className = 'chip';
+    chip.innerHTML = `${escapeHtml(t)} <button>✕</button>`;
+    chip.querySelector('button').onclick = () => { exerciseTimesDraft = exerciseTimesDraft.filter((x) => x !== t); renderExerciseTimeChips(); };
+    wrap.appendChild(chip);
+  });
+}
+function renderExerciseDayToggles() {
+  const wrap = document.getElementById('exerciseDaysRow');
+  wrap.innerHTML = '';
+  WEEKDAYS.forEach((w, i) => {
+    const btn = document.createElement('button');
+    btn.className = 'day-toggle' + (exerciseDaysDraft.includes(i) ? ' active' : '');
+    btn.textContent = w;
+    btn.onclick = () => {
+      exerciseDaysDraft = exerciseDaysDraft.includes(i) ? exerciseDaysDraft.filter((x) => x !== i) : [...exerciseDaysDraft, i].sort();
+      renderExerciseDayToggles();
+    };
+    wrap.appendChild(btn);
+  });
+}
+async function saveExercise() {
+  const name = document.getElementById('exerciseNameInput').value.trim();
+  if (!name || exerciseTimesDraft.length === 0 || exerciseDaysDraft.length === 0) {
+    alert('운동 이름, 시간, 요일을 모두 입력해주세요.');
+    return;
+  }
+  const payload = { patientId: activeTab, name, times: exerciseTimesDraft, days: exerciseDaysDraft };
+  if (editingExerciseId) {
+    const updated = await api(`/api/exercises/${editingExerciseId}`, { method: 'PUT', body: JSON.stringify(payload) });
+    state.exercises = state.exercises.map((e) => (e.id === editingExerciseId ? updated : e));
+  } else {
+    const created = await api('/api/exercises', { method: 'POST', body: JSON.stringify(payload) });
+    state.exercises.push(created);
+  }
+  closeModal('exerciseModal');
+  render();
+}
+async function removeExercise(id) {
+  if (!confirm('이 운동 알림을 삭제할까요?')) return;
+  await api(`/api/exercises/${id}`, { method: 'DELETE' });
+  state.exercises = state.exercises.filter((e) => e.id !== id);
+  render();
+}
+
+// ---------------- 재알림 간격 설정 ----------------
+function renderReminderSettings() {
+  const box = document.getElementById('reminderBox');
+  const msg = document.getElementById('reminderSelectMsg');
+  if (activeTab === 'all') {
+    box.classList.add('hidden');
+    msg.classList.remove('hidden');
+    return;
+  }
+  box.classList.remove('hidden');
+  msg.classList.add('hidden');
+  const patient = state.patients.find((p) => p.id === activeTab);
+  document.getElementById('reminderIntervalInput').value = (patient && patient.reminderIntervalMin) || 15;
+}
+async function saveReminderInterval() {
+  const val = Number(document.getElementById('reminderIntervalInput').value) || 15;
+  const updated = await api(`/api/patients/${activeTab}`, { method: 'PUT', body: JSON.stringify({ reminderIntervalMin: val }) });
+  state.patients = state.patients.map((p) => (p.id === activeTab ? updated : p));
+  alert('재알림 간격을 저장했어요.');
 }
 
 function renderDeleteBtn() {
@@ -714,7 +810,7 @@ function renderTimeChips() {
   medTimesDraft.forEach((t) => {
     const chip = document.createElement('span');
     chip.className = 'chip';
-    chip.innerHTML = `${escapeHtml(describeTimeSpec(t))} <button>✕</button>`;
+    chip.innerHTML = `${escapeHtml(t)} <button>✕</button>`;
     chip.querySelector('button').onclick = () => { medTimesDraft = medTimesDraft.filter((x) => x !== t); renderTimeChips(); };
     wrap.appendChild(chip);
   });
@@ -811,12 +907,6 @@ document.getElementById('medTimeAddBtn').onclick = () => {
   const t = document.getElementById('medTimeInput').value;
   if (t && !medTimesDraft.includes(t)) { medTimesDraft.push(t); renderTimeChips(); }
 };
-document.querySelectorAll('.quick-time-btn').forEach((btn) => {
-  btn.onclick = () => {
-    const spec = btn.getAttribute('data-spec');
-    if (spec && !medTimesDraft.includes(spec)) { medTimesDraft.push(spec); renderTimeChips(); }
-  };
-});
 document.getElementById('medSaveBtn').onclick = saveMed;
 document.getElementById('dietAskBtn').onclick = askDiet;
 document.getElementById('dietAskInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') askDiet(); });
@@ -824,6 +914,13 @@ document.getElementById('addDietBtn').onclick = () => openDietModal(null);
 document.getElementById('dietSaveBtn').onclick = saveDiet;
 document.getElementById('bulkAddRowBtn').onclick = () => { bulkItemsDraft.push({ name: '', dosage: '' }); renderBulkItems(); };
 document.getElementById('bulkSaveBtn').onclick = saveBulkMed;
+document.getElementById('addExerciseBtn').onclick = () => openExerciseModal(null);
+document.getElementById('exerciseTimeAddBtn').onclick = () => {
+  const t = document.getElementById('exerciseTimeInput').value;
+  if (t && !exerciseTimesDraft.includes(t)) { exerciseTimesDraft.push(t); renderExerciseTimeChips(); }
+};
+document.getElementById('exerciseSaveBtn').onclick = saveExercise;
+document.getElementById('reminderSaveBtn').onclick = saveReminderInterval;
 document.querySelectorAll('[data-close-modal]').forEach((btn) => {
   btn.onclick = () => closeModal(btn.getAttribute('data-close-modal'));
 });

@@ -90,6 +90,26 @@ function normalizeDays(raw) {
   return days.length ? days.sort((a, b) => a - b) : all;
 }
 
+// 하나의 셀에 컴마(,)나 슬래시(/), 줄바꿈 등으로 여러 시간이 들어온 경우
+// (예: "08:00,13:00,19:00" = 아침/점심/저녁 같이 먹는 약) 모두 분리해서 정규화
+function normalizeTimes(raw) {
+  if (raw === null || raw === undefined || raw === '') return [];
+  const parts = String(raw).split(/[,\n\/、·；;]+/).map((s) => s.trim()).filter(Boolean);
+  const times = [];
+  for (const p of parts) {
+    const t = normalizeTime(p);
+    if (t && !times.includes(t)) times.push(t);
+  }
+  return times.sort();
+}
+
+// 하나의 셀에 컴마(,)로 여러 음식 이름이 들어온 경우
+// (예: "사과, 바나나, 포도") 각각 개별 항목으로 분리
+function splitNames(raw) {
+  if (raw === null || raw === undefined || raw === '') return [];
+  return String(raw).split(/[,、，]+/).map((s) => s.trim()).filter(Boolean);
+}
+
 function normalizeStatus(raw) {
   const s = String(raw || '').trim();
   if (!s) return null;
@@ -140,22 +160,30 @@ app.post('/api/parse-excel', upload.single('file'), async (req, res) => {
     const medSheet = workbook.worksheets.find((s) => s.name.includes('복약')) || workbook.worksheets[0];
     const dietSheet = workbook.worksheets.find((s) => s.name.includes('식단'));
 
+    // 복약: 한 행의 "시간" 칸에 콤마로 여러 시간을 적으면(예: 08:00,13:00,19:00)
+    // 아침/점심/저녁처럼 하루에 여러 번 먹는 약 하나를 한 줄로 등록할 수 있어요.
     const medications = sheetToRows(medSheet).map((r) => {
       const timeRaw = r['시간'] ?? r['time'] ?? '';
       const name = String(r['약이름'] ?? r['약 이름'] ?? r['name'] ?? '').trim();
       const dosage = String(r['수량'] ?? r['dosage'] ?? '').trim();
       const daysRaw = r['요일'] ?? r['days'] ?? '';
-      const time = normalizeTime(timeRaw);
+      const times = normalizeTimes(timeRaw);
       const days = normalizeDays(daysRaw);
-      return { row: r.__row, name, dosage, time, timeRaw: String(timeRaw || ''), days, valid: !!(name && time) };
+      return { row: r.__row, name, dosage, times, timeRaw: String(timeRaw || ''), days, valid: !!(name && times.length) };
     }).filter((r) => r.name || r.timeRaw);
 
-    const diets = dietSheet ? sheetToRows(dietSheet).map((r) => {
-      const name = String(r['음식이름'] ?? r['음식 이름'] ?? r['name'] ?? '').trim();
+    // 식단: 한 행의 "음식이름" 칸에 콤마로 여러 음식을 적으면(예: 사과, 바나나, 포도)
+    // 같은 상태/메모로 각각 개별 항목으로 나눠서 등록해요.
+    const diets = dietSheet ? sheetToRows(dietSheet).flatMap((r) => {
+      const nameRaw = r['음식이름'] ?? r['음식 이름'] ?? r['name'] ?? '';
       const statusRaw = r['상태'] ?? r['status'] ?? '';
       const note = String(r['메모'] ?? r['note'] ?? '').trim();
       const status = normalizeStatus(statusRaw);
-      return { row: r.__row, name, statusRaw: String(statusRaw || ''), status, note, valid: !!(name && status) };
+      const names = splitNames(nameRaw);
+      if (names.length === 0) {
+        return [{ row: r.__row, name: '', statusRaw: String(statusRaw || ''), status, note, valid: false }];
+      }
+      return names.map((name) => ({ row: r.__row, name, statusRaw: String(statusRaw || ''), status, note, valid: !!(name && status) }));
     }).filter((r) => r.name || r.statusRaw) : [];
 
     res.json({ medications, diets });

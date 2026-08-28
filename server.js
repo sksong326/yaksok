@@ -23,7 +23,7 @@ webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
 
 // ---- 아주 단순한 파일 기반 저장소 ----
 function loadData() {
-  const fallback = { patients: [], medications: [], logs: {}, subscriptions: [], diets: [] };
+  const fallback = { patients: [], medications: [], logs: {}, subscriptions: [], diets: [], exercises: [] };
   try {
     const parsed = JSON.parse(fs.readFileSync(DATA_FILE, 'utf-8'));
     return { ...fallback, ...parsed };
@@ -75,75 +75,14 @@ function normalizeTime(raw) {
   return null;
 }
 
-// ---- 식사 시간 기준값 & 식전/식후/취침전 처리 ----
-const MEAL_LABEL = { breakfast: '아침', lunch: '점심', dinner: '저녁' };
-const DEFAULT_MEAL_TIMES = { breakfast: '08:00', lunch: '12:30', dinner: '18:30', bedtime: '22:00' };
-
-function addMinutesToTime(hhmm, delta) {
-  const [h, m] = String(hhmm).split(':').map(Number);
-  let total = h * 60 + m + delta;
-  total = ((total % 1440) + 1440) % 1440;
-  return `${pad(Math.floor(total / 60))}:${pad(total % 60)}`;
-}
-
-// spec 예: "08:00"(고정), "M:breakfast:after:30"(아침 식후 30분), "B:30"(취침 30분 전)
-function resolveTimeSpec(spec, mealTimes) {
-  const mt = { ...DEFAULT_MEAL_TIMES, ...(mealTimes || {}) };
-  if (/^\d{1,2}:\d{2}$/.test(spec)) return spec;
-  const m = spec.match(/^M:(breakfast|lunch|dinner):(before|after):(\d+)$/);
-  if (m) {
-    const base = mt[m[1]];
-    const delta = m[2] === 'before' ? -Number(m[3]) : Number(m[3]);
-    return addMinutesToTime(base, delta);
-  }
-  const b = spec.match(/^B:(\d+)$/);
-  if (b) return addMinutesToTime(mt.bedtime, -Number(b[1]));
-  return spec;
-}
-
-function describeTimeSpec(spec) {
-  if (/^\d{1,2}:\d{2}$/.test(spec)) return spec;
-  const m = spec.match(/^M:(breakfast|lunch|dinner):(before|after):(\d+)$/);
-  if (m) {
-    const label = MEAL_LABEL[m[1]];
-    const when = m[2] === 'before' ? '식전' : '식후';
-    const offset = Number(m[3]);
-    return offset > 0 ? `${label} ${when} ${offset}분` : `${label} ${when}`;
-  }
-  const b = spec.match(/^B:(\d+)$/);
-  if (b) {
-    const offset = Number(b[1]);
-    return offset > 0 ? `취침 ${offset}분 전` : '취침 전';
-  }
-  return spec;
-}
-
-function specSortMinutes(spec) {
-  const resolved = resolveTimeSpec(spec, DEFAULT_MEAL_TIMES);
-  const [h, m] = resolved.split(':').map(Number);
-  return h * 60 + m;
-}
-
-// "08:00", "아침식후", "점심식후30분", "저녁식전", "취침전", "취침전30분" 등을 spec으로 변환
+// "08:00", "8:00 AM", "0.5"(엑셀 시간 형식) 등을 "HH:mm"으로 정규화
 function parseTimeToken(token) {
-  const s = String(token).trim();
-  if (!s) return null;
-  const fixed = normalizeTime(s);
-  if (fixed) return fixed;
-  const noSpace = s.replace(/\s+/g, '');
-  if (noSpace.includes('취침')) {
-    const m = noSpace.match(/취침(?:전)?(\d+)?분?(?:전)?/);
-    if (m) return `B:${m[1] || 0}`;
-  }
-  const mm = noSpace.match(/^(아침|점심|저녁)(식전|식후)(\d+)?분?$/);
-  if (mm) {
-    const mealMap = { 아침: 'breakfast', 점심: 'lunch', 저녁: 'dinner' };
-    const meal = mealMap[mm[1]];
-    const when = mm[2] === '식전' ? 'before' : 'after';
-    const offset = mm[3] ? Number(mm[3]) : 30;
-    return `M:${meal}:${when}:${offset}`;
-  }
-  return null;
+  return normalizeTime(token);
+}
+
+function timeToMinutes(hhmm) {
+  const [h, m] = String(hhmm).split(':').map(Number);
+  return h * 60 + m;
 }
 
 function normalizeDays(raw) {
@@ -171,7 +110,7 @@ function normalizeTimes(raw) {
     const t = parseTimeToken(p);
     if (t && !times.includes(t)) times.push(t);
   }
-  return times.sort((a, b) => specSortMinutes(a) - specSortMinutes(b));
+  return times.sort((a, b) => timeToMinutes(a) - timeToMinutes(b));
 }
 
 // 하나의 셀에 컴마(,)로 여러 음식 이름이 들어온 경우
@@ -240,7 +179,7 @@ app.post('/api/parse-excel', upload.single('file'), async (req, res) => {
       const daysRaw = r['요일'] ?? r['days'] ?? '';
       const times = normalizeTimes(timeRaw);
       const days = normalizeDays(daysRaw);
-      return { row: r.__row, name, dosage, times, timesDisplay: times.map(describeTimeSpec), timeRaw: String(timeRaw || ''), days, valid: !!(name && times.length) };
+      return { row: r.__row, name, dosage, times, timesDisplay: times, timeRaw: String(timeRaw || ''), days, valid: !!(name && times.length) };
     }).filter((r) => r.name || r.timeRaw);
 
     // 식단: 한 행의 "음식이름" 칸에 콤마로 여러 음식을 적으면(예: 사과, 바나나, 포도)
@@ -275,28 +214,30 @@ app.get('/api/data', (req, res) => {
 });
 
 // ---- 환자(가족) ----
+const DEFAULT_REMINDER_INTERVAL_MIN = 15;
+
 app.post('/api/patients', (req, res) => {
   const data = loadData();
   const { name, color } = req.body;
   if (!name) return res.status(400).json({ error: 'name required' });
-  const patient = { id: uid('p'), name, color: color || '#2F6F62', mealTimes: { ...DEFAULT_MEAL_TIMES } };
+  const patient = { id: uid('p'), name, color: color || '#2F6F62', reminderIntervalMin: DEFAULT_REMINDER_INTERVAL_MIN };
   data.patients.push(patient);
   saveData(data);
   res.json(patient);
 });
 
-// ---- 식사 시간 설정 (식전/식후/취침전 계산 기준) ----
+// ---- 재알림 간격 등 환자 설정 변경 ----
 app.put('/api/patients/:id', (req, res) => {
   const data = loadData();
   const idx = data.patients.findIndex((p) => p.id === req.params.id);
   if (idx === -1) return res.status(404).json({ error: 'not found' });
-  const { mealTimes, name, color } = req.body;
+  const { name, color, reminderIntervalMin } = req.body;
   const patient = data.patients[idx];
   data.patients[idx] = {
     ...patient,
     ...(name ? { name } : {}),
     ...(color ? { color } : {}),
-    mealTimes: mealTimes ? { ...DEFAULT_MEAL_TIMES, ...(patient.mealTimes || {}), ...mealTimes } : (patient.mealTimes || { ...DEFAULT_MEAL_TIMES }),
+    ...(reminderIntervalMin !== undefined ? { reminderIntervalMin: Math.max(1, Number(reminderIntervalMin) || DEFAULT_REMINDER_INTERVAL_MIN) } : {}),
   };
   saveData(data);
   res.json(data.patients[idx]);
@@ -306,6 +247,7 @@ app.delete('/api/patients/:id', (req, res) => {
   const data = loadData();
   data.patients = data.patients.filter((p) => p.id !== req.params.id);
   data.medications = data.medications.filter((m) => m.patientId !== req.params.id);
+  data.exercises = data.exercises.filter((e) => e.patientId !== req.params.id);
   saveData(data);
   res.json({ ok: true });
 });
@@ -387,6 +329,35 @@ app.put('/api/medications/:id', (req, res) => {
 app.delete('/api/medications/:id', (req, res) => {
   const data = loadData();
   data.medications = data.medications.filter((m) => m.id !== req.params.id);
+  saveData(data);
+  res.json({ ok: true });
+});
+
+// ---- 운동 알림 (권고사항 - 놓쳐도 반복 알림 없음) ----
+app.post('/api/exercises', (req, res) => {
+  const data = loadData();
+  const { patientId, name, times, days } = req.body;
+  if (!patientId || !name || !Array.isArray(times) || times.length === 0) {
+    return res.status(400).json({ error: 'invalid exercise' });
+  }
+  const ex = { id: uid('ex'), patientId, name: name.trim(), times, days: days && days.length ? days : [0, 1, 2, 3, 4, 5, 6] };
+  data.exercises.push(ex);
+  saveData(data);
+  res.json(ex);
+});
+
+app.put('/api/exercises/:id', (req, res) => {
+  const data = loadData();
+  const idx = data.exercises.findIndex((e) => e.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: 'not found' });
+  data.exercises[idx] = { ...data.exercises[idx], ...req.body, id: req.params.id };
+  saveData(data);
+  res.json(data.exercises[idx]);
+});
+
+app.delete('/api/exercises/:id', (req, res) => {
+  const data = loadData();
+  data.exercises = data.exercises.filter((e) => e.id !== req.params.id);
   saveData(data);
   res.json({ ok: true });
 });
@@ -480,50 +451,73 @@ async function sendToAll(payload) {
   }
 }
 
-// ---- 매분 복약 시간 체크 (한국 시간 기준) ----
-// 체크(복용 표시)하지 않으면, 정해진 시간이 지나도 일정 간격으로 계속 재알림을 보내요.
-// (식사시간이 매번 조금씩 달라도, 못 챙겨 먹고 지나치는 걸 막기 위함)
-const REPEAT_INTERVAL_MIN = Number(process.env.REMINDER_REPEAT_MIN || 15); // 몇 분마다 재알림
-const REPEAT_MAX_MIN = Number(process.env.REMINDER_MAX_MIN || 180); // 최초 시간 이후 최대 몇 분까지 반복할지
+// ---- 매분 복약/운동 시간 체크 (한국 시간 기준) ----
+// 복약: 체크 안 하면 정해진 시간이 지나도 최대 3번까지 재알림.
+// 운동: 권고사항이라 시간에 딱 한 번만 알려주고 반복하지 않음.
+const REPEAT_MAX_COUNT = 3; // 최초 알림 포함 최대 몇 번까지 보낼지
 
-const lastNotifiedAt = new Map(); // notifyKey -> 그날 0시부터 몇 분째에 마지막으로 보냈는지
+const lastNotifiedAt = new Map(); // notifyKey -> { lastMin, count }
+const exerciseNotified = new Set(); // notifyKey (하루 1번만 보내면 되므로 Set으로 충분)
 
 cron.schedule('* * * * *', async () => {
   const d = nowKST();
   const dateKey = dateKeyKST(d);
   const nowMin = d.getHours() * 60 + d.getMinutes();
+  const hm = hmKST(d);
   const weekday = d.getDay();
   const data = loadData();
 
+  // ---- 복약: 최대 3번까지 재알림 ----
   data.medications.forEach((med) => {
     if (!med.days.includes(weekday)) return;
     const patient = data.patients.find((p) => p.id === med.patientId);
-    const mealTimes = (patient && patient.mealTimes) || DEFAULT_MEAL_TIMES;
-    med.times.forEach((spec) => {
-      const targetHM = resolveTimeSpec(spec, mealTimes);
-      const [th, tm] = targetHM.split(':').map(Number);
-      const targetMin = th * 60 + tm;
+    const intervalMin = Math.max(1, Number(patient && patient.reminderIntervalMin) || DEFAULT_REMINDER_INTERVAL_MIN);
+    med.times.forEach((time) => {
+      const targetMin = timeToMinutes(time);
       if (nowMin < targetMin) return; // 아직 시간 전
 
-      const notifyKey = `${dateKey}_${med.id}_${spec}`;
-      const key = `${dateKey}|${med.id}|${spec}`;
+      const notifyKey = `${dateKey}_${med.id}_${time}`;
+      const key = `${dateKey}|${med.id}|${time}`;
       if (data.logs[key]) { lastNotifiedAt.delete(notifyKey); return; } // 이미 복용 체크됨 → 재알림 중단
-      if (nowMin - targetMin > REPEAT_MAX_MIN) return; // 너무 오래 지나면 재알림도 중단
 
-      const last = lastNotifiedAt.get(notifyKey);
-      if (last !== undefined && nowMin - last < REPEAT_INTERVAL_MIN) return; // 아직 재알림 주기 아님
-      lastNotifiedAt.set(notifyKey, nowMin);
+      const state = lastNotifiedAt.get(notifyKey);
+      if (state) {
+        if (state.count >= REPEAT_MAX_COUNT) return; // 이미 정해진 횟수만큼 다 보냄
+        if (nowMin - state.lastMin < intervalMin) return; // 아직 재알림 주기 아님
+      }
+      const isFirst = !state;
+      const count = (state ? state.count : 0) + 1;
+      lastNotifiedAt.set(notifyKey, { lastMin: nowMin, count });
 
-      const isFirst = last === undefined;
       sendToAll({
-        title: isFirst ? '약속 시간이에요' : '아직 안 드셨어요 ⏰',
-        body: `${patient ? patient.name : ''} · ${med.name}${med.dosage ? ' · ' + med.dosage : ''} (${describeTimeSpec(spec)} · ${targetHM} 예정)`,
+        title: isFirst ? '약속 시간이에요' : '아직 안 드셨어요~ 드셨으면 체크 부탁드려요!',
+        body: `${patient ? patient.name : ''} · ${med.name}${med.dosage ? ' · ' + med.dosage : ''} (${time})`,
+      });
+    });
+  });
+
+  // ---- 운동: 권고사항이므로 시간 맞을 때 딱 한 번만 ----
+  data.exercises.forEach((ex) => {
+    if (!ex.days.includes(weekday)) return;
+    ex.times.forEach((time) => {
+      if (time !== hm) return; // 정각 그 순간에만 (반복 없음)
+      const key = `${dateKey}|ex:${ex.id}|${time}`;
+      if (data.logs[key]) return;
+      const notifyKey = `${dateKey}_ex_${ex.id}_${time}`;
+      if (exerciseNotified.has(notifyKey)) return;
+      exerciseNotified.add(notifyKey);
+
+      const patient = data.patients.find((p) => p.id === ex.patientId);
+      sendToAll({
+        title: '운동할 시간이에요 🏃',
+        body: `${patient ? patient.name : ''} · ${ex.name} (${time})`,
       });
     });
   });
 
   // 메모리 누수 방지
   if (lastNotifiedAt.size > 3000) lastNotifiedAt.clear();
+  if (exerciseNotified.size > 3000) exerciseNotified.clear();
 }, { timezone: 'Asia/Seoul' });
 
 const PORT = process.env.PORT || 3000;

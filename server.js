@@ -3,6 +3,10 @@ const path = require('path');
 const express = require('express');
 const webpush = require('web-push');
 const cron = require('node-cron');
+const multer = require('multer');
+const ExcelJS = require('exceljs');
+
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
 
 const DATA_FILE = path.join(__dirname, 'data.json');
 const PUBLIC_DIR = path.join(__dirname, 'public');
@@ -50,9 +54,116 @@ function hmKST(d) {
   return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+// ---- 엑셀 업로드에서 읽은 값 정규화 ----
+function normalizeTime(raw) {
+  if (raw === null || raw === undefined || raw === '') return null;
+  if (raw instanceof Date) return `${pad(raw.getHours())}:${pad(raw.getMinutes())}`;
+  const s = String(raw).trim();
+  let m = s.match(/^(\d{1,2}):(\d{2})(?::\d{2})?\s*(AM|PM|am|pm)?/);
+  if (m) {
+    let h = Number(m[1]); const mm = Number(m[2]); const ap = (m[3] || '').toLowerCase();
+    if (ap === 'pm' && h < 12) h += 12;
+    if (ap === 'am' && h === 12) h = 0;
+    if (h > 23 || mm > 59) return null;
+    return `${pad(h)}:${pad(mm)}`;
+  }
+  const num = Number(s);
+  if (!isNaN(num) && num >= 0 && num < 1) {
+    const totalMin = Math.round(num * 24 * 60);
+    return `${pad(Math.floor(totalMin / 60))}:${pad(totalMin % 60)}`;
+  }
+  return null;
+}
+
+function normalizeDays(raw) {
+  const all = [0, 1, 2, 3, 4, 5, 6];
+  if (!raw) return all;
+  const s = String(raw).trim();
+  if (!s || s.includes('매일')) return all;
+  if (s.includes('평일')) return [1, 2, 3, 4, 5];
+  if (s.includes('주말')) return [0, 6];
+  const map = { 일: 0, 월: 1, 화: 2, 수: 3, 목: 4, 금: 5, 토: 6 };
+  const days = [];
+  for (const ch of s) {
+    if (map[ch] !== undefined && !days.includes(map[ch])) days.push(map[ch]);
+  }
+  return days.length ? days.sort((a, b) => a - b) : all;
+}
+
+function normalizeStatus(raw) {
+  const s = String(raw || '').trim();
+  if (!s) return null;
+  if (s.includes('금지') || s.includes('안됨') || s.includes('안돼')) return 'avoid';
+  if (s.includes('주의') || s.includes('조심')) return 'caution';
+  if (s.includes('허용') || s.includes('가능') || s.includes('괜찮')) return 'ok';
+  return null;
+}
+
+function cellText(cell) {
+  if (cell === null || cell === undefined) return '';
+  if (cell instanceof Date) return cell;
+  if (typeof cell === 'object' && cell.text !== undefined) return cell.text;
+  if (typeof cell === 'object' && cell.result !== undefined) return cell.result;
+  return cell;
+}
+
+function sheetToRows(worksheet) {
+  if (!worksheet) return [];
+  const rows = [];
+  const headerRow = worksheet.getRow(1);
+  const headers = [];
+  headerRow.eachCell({ includeEmpty: true }, (cell, colNumber) => {
+    headers[colNumber] = String(cellText(cell.value) || '').trim();
+  });
+  worksheet.eachRow((row, rowNumber) => {
+    if (rowNumber === 1) return;
+    const obj = { __row: rowNumber };
+    row.eachCell({ includeEmpty: true }, (cell, colNumber) => {
+      const key = headers[colNumber];
+      if (key) obj[key] = cellText(cell.value);
+    });
+    rows.push(obj);
+  });
+  return rows;
+}
+
 const app = express();
 app.use(express.json());
 app.use(express.static(PUBLIC_DIR));
+
+app.post('/api/parse-excel', upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: '파일이 없어요.' });
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(req.file.buffer);
+
+    const medSheet = workbook.worksheets.find((s) => s.name.includes('복약')) || workbook.worksheets[0];
+    const dietSheet = workbook.worksheets.find((s) => s.name.includes('식단'));
+
+    const medications = sheetToRows(medSheet).map((r) => {
+      const timeRaw = r['시간'] ?? r['time'] ?? '';
+      const name = String(r['약이름'] ?? r['약 이름'] ?? r['name'] ?? '').trim();
+      const dosage = String(r['수량'] ?? r['dosage'] ?? '').trim();
+      const daysRaw = r['요일'] ?? r['days'] ?? '';
+      const time = normalizeTime(timeRaw);
+      const days = normalizeDays(daysRaw);
+      return { row: r.__row, name, dosage, time, timeRaw: String(timeRaw || ''), days, valid: !!(name && time) };
+    }).filter((r) => r.name || r.timeRaw);
+
+    const diets = dietSheet ? sheetToRows(dietSheet).map((r) => {
+      const name = String(r['음식이름'] ?? r['음식 이름'] ?? r['name'] ?? '').trim();
+      const statusRaw = r['상태'] ?? r['status'] ?? '';
+      const note = String(r['메모'] ?? r['note'] ?? '').trim();
+      const status = normalizeStatus(statusRaw);
+      return { row: r.__row, name, statusRaw: String(statusRaw || ''), status, note, valid: !!(name && status) };
+    }).filter((r) => r.name || r.statusRaw) : [];
+
+    res.json({ medications, diets });
+  } catch (e) {
+    console.error(e);
+    res.status(400).json({ error: '엑셀 파일을 읽는 중 문제가 생겼어요. 템플릿 형식과 같은지 확인해주세요.' });
+  }
+});
 
 app.get('/api/vapid-public-key', (req, res) => {
   res.json({ publicKey: VAPID_PUBLIC_KEY });

@@ -449,7 +449,7 @@ function renderExcelMedRow(r, idx) {
   const text = document.createElement('div');
   text.className = 'excel-row-text';
   text.innerHTML = r.valid
-    ? `<b>${escapeHtml(r.time)}</b> · ${escapeHtml(r.name)}${r.dosage ? ' · ' + escapeHtml(r.dosage) : ''} · ${r.days.length === 7 ? '매일' : r.days.map((d) => WEEKDAYS[d]).join(' ')}`
+    ? `<b>${escapeHtml(r.times.join(', '))}</b> · ${escapeHtml(r.name)}${r.dosage ? ' · ' + escapeHtml(r.dosage) : ''} · ${r.days.length === 7 ? '매일' : r.days.map((d) => WEEKDAYS[d]).join(' ')}`
     : `${escapeHtml(r.name || '(이름 없음)')} <span class="excel-row-warning">${r.row}행: 시간 또는 이름을 확인해주세요 (입력값: "${escapeHtml(r.timeRaw)}")</span>`;
   row.appendChild(cb);
   row.appendChild(text);
@@ -480,7 +480,7 @@ async function confirmExcelImport() {
   if (meds.length === 0 && diets.length === 0) { alert('등록할 항목을 선택해주세요.'); return; }
 
   for (const m of meds) {
-    const created = await api('/api/medications', { method: 'POST', body: JSON.stringify({ patientId: activeTab, name: m.name, dosage: m.dosage, times: [m.time], days: m.days }) });
+    const created = await api('/api/medications', { method: 'POST', body: JSON.stringify({ patientId: activeTab, name: m.name, dosage: m.dosage, times: m.times, days: m.days }) });
     state.medications.push(created);
   }
   for (const d of diets) {

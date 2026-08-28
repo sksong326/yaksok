@@ -817,8 +817,6 @@ document.querySelectorAll('.quick-time-btn').forEach((btn) => {
     if (spec && !medTimesDraft.includes(spec)) { medTimesDraft.push(spec); renderTimeChips(); }
   };
 });
-document.getElementById('mealTimesBtn').onclick = openMealTimesModal;
-document.getElementById('mealTimesSaveBtn').onclick = saveMealTimes;
 document.getElementById('medSaveBtn').onclick = saveMed;
 document.getElementById('dietAskBtn').onclick = askDiet;
 document.getElementById('dietAskInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') askDiet(); });

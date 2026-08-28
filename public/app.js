@@ -13,6 +13,46 @@ const STATUS_LABEL = { ok: '먹어도 돼요', caution: '주의해서 조금만'
 const STATUS_ICON = { ok: '✅', caution: '⚠️', avoid: '⛔' };
 
 function pad(n) { return String(n).padStart(2, '0'); }
+
+// ---- 식사 시간 기준 처리 (server.js와 동일한 로직) ----
+const MEAL_LABEL = { breakfast: '아침', lunch: '점심', dinner: '저녁' };
+const DEFAULT_MEAL_TIMES = { breakfast: '08:00', lunch: '12:30', dinner: '18:30', bedtime: '22:00' };
+
+function addMinutesToTime(hhmm, delta) {
+  const [h, m] = String(hhmm).split(':').map(Number);
+  let total = h * 60 + m + delta;
+  total = ((total % 1440) + 1440) % 1440;
+  return `${pad(Math.floor(total / 60))}:${pad(total % 60)}`;
+}
+function resolveTimeSpec(spec, mealTimes) {
+  const mt = { ...DEFAULT_MEAL_TIMES, ...(mealTimes || {}) };
+  if (/^\d{1,2}:\d{2}$/.test(spec)) return spec;
+  const m = spec.match(/^M:(breakfast|lunch|dinner):(before|after):(\d+)$/);
+  if (m) {
+    const base = mt[m[1]];
+    const delta = m[2] === 'before' ? -Number(m[3]) : Number(m[3]);
+    return addMinutesToTime(base, delta);
+  }
+  const b = spec.match(/^B:(\d+)$/);
+  if (b) return addMinutesToTime(mt.bedtime, -Number(b[1]));
+  return spec;
+}
+function describeTimeSpec(spec) {
+  if (/^\d{1,2}:\d{2}$/.test(spec)) return spec;
+  const m = spec.match(/^M:(breakfast|lunch|dinner):(before|after):(\d+)$/);
+  if (m) {
+    const label = MEAL_LABEL[m[1]];
+    const when = m[2] === 'before' ? '식전' : '식후';
+    const offset = Number(m[3]);
+    return offset > 0 ? `${label} ${when} ${offset}분` : `${label} ${when}`;
+  }
+  const b = spec.match(/^B:(\d+)$/);
+  if (b) {
+    const offset = Number(b[1]);
+    return offset > 0 ? `취침 ${offset}분 전` : '취침 전';
+  }
+  return spec;
+}
 function dateKey(d) { return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; }
 function nowHM() { const d = new Date(); return `${pad(d.getHours())}:${pad(d.getMinutes())}`; }
 function timeToMin(t) { const [h, m] = t.split(':').map(Number); return h * 60 + m; }
@@ -81,12 +121,15 @@ function scheduleToday() {
     if (!med.days.includes(wd)) return;
     const patient = state.patients.find((p) => p.id === med.patientId);
     if (!patient) return;
-    med.times.forEach((time) => {
-      const key = `${tKey}|${med.id}|${time}`;
-      items.push({ key, time, medId: med.id, medName: med.name, dosage: med.dosage, patientId: patient.id, patientName: patient.name, color: patient.color, taken: !!state.logs[key] });
+    const mealTimes = patient.mealTimes || DEFAULT_MEAL_TIMES;
+    med.times.forEach((spec) => {
+      const key = `${tKey}|${med.id}|${spec}`;
+      const clock = resolveTimeSpec(spec, mealTimes);
+      const label = describeTimeSpec(spec);
+      items.push({ key, time: spec, clock, label, medId: med.id, medName: med.name, dosage: med.dosage, patientId: patient.id, patientName: patient.name, color: patient.color, taken: !!state.logs[key] });
     });
   });
-  items.sort((a, b) => timeToMin(a.time) - timeToMin(b.time));
+  items.sort((a, b) => timeToMin(a.clock) - timeToMin(b.clock));
   return items;
 }
 
@@ -122,7 +165,8 @@ function renderTodayItem(item) {
   main.className = 'today-item-main';
   const titleRow = document.createElement('div');
   titleRow.className = 'today-item-title-row';
-  titleRow.innerHTML = `<span class="time-mono">${item.time}</span><span>${escapeHtml(item.medName)}</span>` + (item.dosage ? `<span class="muted-text" style="margin:0">· ${escapeHtml(item.dosage)}</span>` : '');
+  const timeText = item.label !== item.clock ? `${item.clock} (${item.label})` : item.clock;
+  titleRow.innerHTML = `<span class="time-mono">${escapeHtml(timeText)}</span><span>${escapeHtml(item.medName)}</span>` + (item.dosage ? `<span class="muted-text" style="margin:0">· ${escapeHtml(item.dosage)}</span>` : '');
   main.appendChild(titleRow);
   if (activeTab === 'all') {
     const tag = document.createElement('div');
@@ -132,7 +176,7 @@ function renderTodayItem(item) {
   }
   li.appendChild(main);
 
-  const isPast = timeToMin(item.time) < timeToMin(nowHM());
+  const isPast = timeToMin(item.clock) < timeToMin(nowHM());
   const status = item.taken ? 'taken' : isPast ? 'overdue' : 'upcoming';
   const badge = document.createElement('span');
   badge.className = 'badge badge-' + status;
@@ -449,7 +493,7 @@ function renderExcelMedRow(r, idx) {
   const text = document.createElement('div');
   text.className = 'excel-row-text';
   text.innerHTML = r.valid
-    ? `<b>${escapeHtml(r.times.join(', '))}</b> · ${escapeHtml(r.name)}${r.dosage ? ' · ' + escapeHtml(r.dosage) : ''} · ${r.days.length === 7 ? '매일' : r.days.map((d) => WEEKDAYS[d]).join(' ')}`
+    ? `<b>${escapeHtml((r.timesDisplay || r.times).join(', '))}</b> · ${escapeHtml(r.name)}${r.dosage ? ' · ' + escapeHtml(r.dosage) : ''} · ${r.days.length === 7 ? '매일' : r.days.map((d) => WEEKDAYS[d]).join(' ')}`
     : `${escapeHtml(r.name || '(이름 없음)')} <span class="excel-row-warning">${r.row}행: 시간 또는 이름을 확인해주세요 (입력값: "${escapeHtml(r.timeRaw)}")</span>`;
   row.appendChild(cb);
   row.appendChild(text);
@@ -479,13 +523,14 @@ async function confirmExcelImport() {
   const diets = excelParsed.diets.filter((r, idx) => r.valid && excelIncluded.diets[idx]);
   if (meds.length === 0 && diets.length === 0) { alert('등록할 항목을 선택해주세요.'); return; }
 
+  let dup = 0;
   for (const m of meds) {
     const created = await api('/api/medications', { method: 'POST', body: JSON.stringify({ patientId: activeTab, name: m.name, dosage: m.dosage, times: m.times, days: m.days }) });
-    state.medications.push(created);
+    if (created.duplicate) { dup += 1; } else { state.medications.push(created); }
   }
   for (const d of diets) {
     const created = await api('/api/diets', { method: 'POST', body: JSON.stringify({ patientId: activeTab, name: d.name, status: d.status, note: d.note }) });
-    state.diets.push(created);
+    if (created.duplicate) { dup += 1; } else { state.diets.push(created); }
   }
 
   excelParsed = null;
@@ -493,7 +538,8 @@ async function confirmExcelImport() {
   document.getElementById('excelFileInput').value = '';
   document.getElementById('excelFileName').textContent = '';
   document.getElementById('excelUploadBtn').disabled = true;
-  alert(`${meds.length + diets.length}개 항목을 등록했어요.`);
+  const newCount = meds.length + diets.length - dup;
+  alert(dup > 0 ? `${newCount}개 항목을 등록했어요. (이미 등록된 ${dup}개는 중복이라 건너뛰었어요)` : `${newCount}개 항목을 등록했어요.`);
   render();
 }
 
@@ -553,8 +599,9 @@ async function saveBulkMed() {
     alert('시간, 요일, 그리고 약 이름을 최소 1개는 입력해주세요.');
     return;
   }
-  const created = await api('/api/medications/bulk', { method: 'POST', body: JSON.stringify({ patientId: activeTab, time, days: bulkDaysDraft, items }) });
-  state.medications.push(...created);
+  const res = await api('/api/medications/bulk', { method: 'POST', body: JSON.stringify({ patientId: activeTab, time, days: bulkDaysDraft, items }) });
+  state.medications.push(...res.created);
+  if (res.skipped > 0) alert(`${res.created.length}개 등록, 이미 등록된 ${res.skipped}개는 건너뛰었어요.`);
   closeModal('bulkMedModal');
   render();
 }
@@ -587,7 +634,7 @@ function renderMeds() {
     const info = document.createElement('div');
     info.innerHTML = `
       <p class="med-item-name">${escapeHtml(m.name)}${m.dosage ? ' · ' + escapeHtml(m.dosage) : ''}</p>
-      <p class="med-item-times">${m.times.join(', ')}</p>
+      <p class="med-item-times">${m.times.map(describeTimeSpec).join(', ')}</p>
       <p class="med-item-days">${m.days.length === 7 ? '매일' : m.days.slice().sort().map((d) => WEEKDAYS[d]).join(' ')}</p>
     `;
     const actions = document.createElement('div');
@@ -667,7 +714,7 @@ function renderTimeChips() {
   medTimesDraft.forEach((t) => {
     const chip = document.createElement('span');
     chip.className = 'chip';
-    chip.innerHTML = `${t} <button>✕</button>`;
+    chip.innerHTML = `${escapeHtml(describeTimeSpec(t))} <button>✕</button>`;
     chip.querySelector('button').onclick = () => { medTimesDraft = medTimesDraft.filter((x) => x !== t); renderTimeChips(); };
     wrap.appendChild(chip);
   });
@@ -699,7 +746,11 @@ async function saveMed() {
     state.medications = state.medications.map((m) => (m.id === editingMedId ? updated : m));
   } else {
     const created = await api('/api/medications', { method: 'POST', body: JSON.stringify(payload) });
-    state.medications.push(created);
+    if (created.duplicate) {
+      alert('이미 같은 이름·시간·요일로 등록된 약이 있어요.');
+    } else {
+      state.medications.push(created);
+    }
   }
   closeModal('medModal');
   render();
@@ -758,8 +809,16 @@ document.getElementById('patientSaveBtn').onclick = savePatient;
 document.getElementById('addMedBtn').onclick = () => openBulkMedModal();
 document.getElementById('medTimeAddBtn').onclick = () => {
   const t = document.getElementById('medTimeInput').value;
-  if (t && !medTimesDraft.includes(t)) { medTimesDraft.push(t); medTimesDraft.sort(); renderTimeChips(); }
+  if (t && !medTimesDraft.includes(t)) { medTimesDraft.push(t); renderTimeChips(); }
 };
+document.querySelectorAll('.quick-time-btn').forEach((btn) => {
+  btn.onclick = () => {
+    const spec = btn.getAttribute('data-spec');
+    if (spec && !medTimesDraft.includes(spec)) { medTimesDraft.push(spec); renderTimeChips(); }
+  };
+});
+document.getElementById('mealTimesBtn').onclick = openMealTimesModal;
+document.getElementById('mealTimesSaveBtn').onclick = saveMealTimes;
 document.getElementById('medSaveBtn').onclick = saveMed;
 document.getElementById('dietAskBtn').onclick = askDiet;
 document.getElementById('dietAskInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') askDiet(); });

@@ -103,6 +103,15 @@ body {
 .day-toggle.active { background: var(--primary); color: #fff; }
 .mt { margin-top: 16px; }
 
+.excel-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.excel-preview-group { margin-top: 12px; }
+.excel-preview-title { font-weight: 600; font-size: 0.9rem; margin: 0 0 8px; }
+.excel-row { display: flex; align-items: flex-start; gap: 10px; border: 1px solid var(--line); border-radius: 14px; padding: 10px 14px; margin-bottom: 6px; background: var(--surface); }
+.excel-row.invalid { border-color: var(--danger); background: rgba(217,100,91,0.06); }
+.excel-row-text { font-size: 0.9rem; flex: 1; }
+.excel-row-warning { font-size: 0.78rem; color: var(--danger); margin-top: 2px; }
+.excel-empty-note { font-size: 0.85rem; color: var(--ink-soft); }
+
 .mt-sm { margin-top: 8px; }
 .bulk-items-list { margin-top: 8px; display: flex; flex-direction: column; gap: 8px; }
 .bulk-item-row { display: flex; gap: 8px; align-items: center; }

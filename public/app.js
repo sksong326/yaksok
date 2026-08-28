@@ -41,6 +41,7 @@ function render() {
   if (!hasPatients) return;
   renderToday();
   renderWeek();
+  renderExcelSection();
   renderDiet();
   renderMeds();
   renderDeleteBtn();
@@ -354,6 +355,145 @@ async function removeDiet(id) {
   if (!confirm('이 음식 정보를 삭제할까요?')) return;
   await api(`/api/diets/${id}`, { method: 'DELETE' });
   state.diets = state.diets.filter((d) => d.id !== id);
+  render();
+}
+
+// ---------------- 엑셀로 한 번에 등록 ----------------
+let excelParsed = null; // 서버가 파싱해준 결과
+let excelIncluded = { medications: [], diets: [] }; // 체크박스 상태
+
+function renderExcelSection() {
+  const box = document.getElementById('excelBox');
+  const msg = document.getElementById('excelSelectMsg');
+  if (activeTab === 'all') {
+    box.classList.add('hidden');
+    msg.classList.remove('hidden');
+    return;
+  }
+  box.classList.remove('hidden');
+  msg.classList.add('hidden');
+}
+
+document.getElementById('excelPickBtn').onclick = () => document.getElementById('excelFileInput').click();
+document.getElementById('excelFileInput').onchange = (e) => {
+  const file = e.target.files[0];
+  document.getElementById('excelFileName').textContent = file ? file.name : '';
+  document.getElementById('excelUploadBtn').disabled = !file;
+  document.getElementById('excelPreview').classList.add('hidden');
+};
+
+document.getElementById('excelUploadBtn').onclick = async () => {
+  const file = document.getElementById('excelFileInput').files[0];
+  if (!file) return;
+  const btn = document.getElementById('excelUploadBtn');
+  btn.disabled = true;
+  btn.textContent = '읽는 중...';
+  try {
+    const formData = new FormData();
+    formData.append('file', file);
+    const res = await fetch('/api/parse-excel', { method: 'POST', body: formData });
+    const data = await res.json();
+    if (!res.ok) { alert(data.error || '엑셀을 읽는 중 문제가 생겼어요.'); return; }
+    excelParsed = data;
+    excelIncluded.medications = data.medications.map((r) => r.valid);
+    excelIncluded.diets = data.diets.map((r) => r.valid);
+    renderExcelPreview();
+  } catch (e) {
+    alert('업로드 중 문제가 생겼어요. 인터넷 연결을 확인해주세요.');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '업로드해서 미리보기';
+  }
+};
+
+function renderExcelPreview() {
+  const wrap = document.getElementById('excelPreview');
+  wrap.classList.remove('hidden');
+  wrap.innerHTML = '';
+
+  if (!excelParsed || (excelParsed.medications.length === 0 && excelParsed.diets.length === 0)) {
+    wrap.innerHTML = '<p class="excel-empty-note">읽을 수 있는 내용이 없었어요. 템플릿 형식과 같은지 확인해주세요.</p>';
+    return;
+  }
+
+  if (excelParsed.medications.length > 0) {
+    const group = document.createElement('div');
+    group.className = 'excel-preview-group';
+    group.innerHTML = `<p class="excel-preview-title">복약 일정 ${excelParsed.medications.length}개</p>`;
+    excelParsed.medications.forEach((r, idx) => group.appendChild(renderExcelMedRow(r, idx)));
+    wrap.appendChild(group);
+  }
+  if (excelParsed.diets.length > 0) {
+    const group = document.createElement('div');
+    group.className = 'excel-preview-group';
+    group.innerHTML = `<p class="excel-preview-title">식단 목록 ${excelParsed.diets.length}개</p>`;
+    excelParsed.diets.forEach((r, idx) => group.appendChild(renderExcelDietRow(r, idx)));
+    wrap.appendChild(group);
+  }
+
+  const confirmBtn = document.createElement('button');
+  confirmBtn.className = 'btn-pill btn-primary btn-block mt';
+  confirmBtn.textContent = '체크된 항목 등록하기';
+  confirmBtn.onclick = confirmExcelImport;
+  wrap.appendChild(confirmBtn);
+}
+
+function renderExcelMedRow(r, idx) {
+  const row = document.createElement('label');
+  row.className = 'excel-row' + (r.valid ? '' : ' invalid');
+  const cb = document.createElement('input');
+  cb.type = 'checkbox';
+  cb.checked = excelIncluded.medications[idx];
+  cb.disabled = !r.valid;
+  cb.onchange = (e) => { excelIncluded.medications[idx] = e.target.checked; };
+  const text = document.createElement('div');
+  text.className = 'excel-row-text';
+  text.innerHTML = r.valid
+    ? `<b>${escapeHtml(r.time)}</b> · ${escapeHtml(r.name)}${r.dosage ? ' · ' + escapeHtml(r.dosage) : ''} · ${r.days.length === 7 ? '매일' : r.days.map((d) => WEEKDAYS[d]).join(' ')}`
+    : `${escapeHtml(r.name || '(이름 없음)')} <span class="excel-row-warning">${r.row}행: 시간 또는 이름을 확인해주세요 (입력값: "${escapeHtml(r.timeRaw)}")</span>`;
+  row.appendChild(cb);
+  row.appendChild(text);
+  return row;
+}
+
+function renderExcelDietRow(r, idx) {
+  const row = document.createElement('label');
+  row.className = 'excel-row' + (r.valid ? '' : ' invalid');
+  const cb = document.createElement('input');
+  cb.type = 'checkbox';
+  cb.checked = excelIncluded.diets[idx];
+  cb.disabled = !r.valid;
+  cb.onchange = (e) => { excelIncluded.diets[idx] = e.target.checked; };
+  const text = document.createElement('div');
+  text.className = 'excel-row-text';
+  text.innerHTML = r.valid
+    ? `${STATUS_ICON[r.status]} <b>${escapeHtml(r.name)}</b> · ${STATUS_LABEL[r.status]}${r.note ? ' · ' + escapeHtml(r.note) : ''}`
+    : `${escapeHtml(r.name || '(이름 없음)')} <span class="excel-row-warning">${r.row}행: 상태(허용/주의/금지)를 확인해주세요 (입력값: "${escapeHtml(r.statusRaw)}")</span>`;
+  row.appendChild(cb);
+  row.appendChild(text);
+  return row;
+}
+
+async function confirmExcelImport() {
+  const meds = excelParsed.medications.filter((r, idx) => r.valid && excelIncluded.medications[idx]);
+  const diets = excelParsed.diets.filter((r, idx) => r.valid && excelIncluded.diets[idx]);
+  if (meds.length === 0 && diets.length === 0) { alert('등록할 항목을 선택해주세요.'); return; }
+
+  for (const m of meds) {
+    const created = await api('/api/medications', { method: 'POST', body: JSON.stringify({ patientId: activeTab, name: m.name, dosage: m.dosage, times: [m.time], days: m.days }) });
+    state.medications.push(created);
+  }
+  for (const d of diets) {
+    const created = await api('/api/diets', { method: 'POST', body: JSON.stringify({ patientId: activeTab, name: d.name, status: d.status, note: d.note }) });
+    state.diets.push(created);
+  }
+
+  excelParsed = null;
+  document.getElementById('excelPreview').classList.add('hidden');
+  document.getElementById('excelFileInput').value = '';
+  document.getElementById('excelFileName').textContent = '';
+  document.getElementById('excelUploadBtn').disabled = true;
+  alert(`${meds.length + diets.length}개 항목을 등록했어요.`);
   render();
 }
 

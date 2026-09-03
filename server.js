@@ -466,7 +466,7 @@ app.delete('/api/diets/:id', (req, res) => {
 // ---- 병원 방문 일정 (캘린더) ----
 app.post('/api/appointments', (req, res) => {
   const data = loadData();
-  const { patientId, hospitalName, date, doctors, fastingRequired, notifyPrevDay, prevDayTime, hoursBefore, note } = req.body;
+  const { patientId, hospitalName, date, doctors, fastingRequired, notifyPrevDay, prevDayTime, hoursBefore, notify30Min, note } = req.body;
   if (!patientId || !hospitalName || !date || !Array.isArray(doctors) || doctors.length === 0) {
     return res.status(400).json({ error: 'invalid appointment' });
   }
@@ -479,6 +479,7 @@ app.post('/api/appointments', (req, res) => {
       .filter((doc) => doc.name && doc.name.trim())
       .map((doc, idx) => ({
         id: doc.id || uid(`doc_${idx}`),
+        type: doc.type === 'exam' ? 'exam' : 'clinic',
         name: doc.name.trim(),
         time: doc.time || '10:00',
         dept: (doc.dept || '').trim()
@@ -487,6 +488,7 @@ app.post('/api/appointments', (req, res) => {
     notifyPrevDay: notifyPrevDay !== undefined ? notifyPrevDay : true,
     prevDayTime: prevDayTime || '21:00',
     hoursBefore: hoursBefore !== undefined ? Number(hoursBefore) : 3,
+    notify30Min: notify30Min !== undefined ? !!notify30Min : true,
     note: (note || '').trim()
   };
   if (!data.appointments) data.appointments = [];
@@ -554,7 +556,26 @@ app.post('/api/test-push', async (req, res) => {
   const count = (loadData().subscriptions || []).length;
   await sendToAll({
     title: '테스트 알림 🔔',
-    body: `현재 ${count}개의 기기에 알림이 정상 연결되어 있습니다! 🎉`
+    body: `현재 ${count}개의 기기에 알림이 정상 연결되어 있습니다! 🎉`,
+    url: '/?target=today',
+    target: 'today'
+  });
+  res.json({ ok: true, sentTo: count });
+});
+
+// ---- 수동 커스텀 푸시 알림 발송 ----
+app.post('/api/send-custom-push', async (req, res) => {
+  const { title, body, url, target } = req.body;
+  if (!title || !body) {
+    return res.status(400).json({ error: '제목과 내용을 모두 입력해주세요.' });
+  }
+  const count = (loadData().subscriptions || []).length;
+  const targetUrl = url || (target ? `/?target=${encodeURIComponent(target)}` : '/');
+  await sendToAll({
+    title: title.trim(),
+    body: body.trim(),
+    url: targetUrl,
+    target: target || ''
   });
   res.json({ ok: true, sentTo: count });
 });
@@ -567,8 +588,21 @@ async function sendToAll(payload) {
     console.warn('[알림 발송 실패] 등록된 푸시 수신 기기가 0개입니다. 브라우저에서 알림 권한을 허용해주세요.');
     return;
   }
+  const targetUrl = payload.url || (payload.data && payload.data.url) || '/';
+  const target = payload.target || (payload.data && payload.data.target) || '';
+  const formattedPayload = {
+    title: payload.title,
+    body: payload.body,
+    url: targetUrl,
+    target,
+    data: {
+      url: targetUrl,
+      target,
+      ...(payload.data || {})
+    }
+  };
   const results = await Promise.allSettled(
-    subs.map((s) => webpush.sendNotification(s.subscription, JSON.stringify(payload)))
+    subs.map((s) => webpush.sendNotification(s.subscription, JSON.stringify(formattedPayload)))
   );
   // 만료되었거나 더 이상 유효하지 않은 구독(404, 410)은 정리
   const stillValid = [];
@@ -651,6 +685,8 @@ cron.schedule('* * * * *', async () => {
       sendToAll({
         title: notiTitle,
         body: `${patient ? patient.name : ''} · ${med.name}${med.dosage ? ' · ' + med.dosage : ''} (${time})`,
+        url: `/?target=med_${med.id}_${time}`,
+        target: `med_${med.id}_${time}`
       });
     });
   });
@@ -671,6 +707,8 @@ cron.schedule('* * * * *', async () => {
           sendToAll({
             title: '운동할 시간이에요 🏃',
             body: `${patient ? patient.name : ''} · ${ex.name} (${time})`,
+            url: `/?target=ex_${ex.id}`,
+            target: `ex_${ex.id}`
           });
         }
       }
@@ -697,41 +735,74 @@ cron.schedule('* * * * *', async () => {
           data.notifiedKeys[notifyKey] = new Date().toISOString();
           dataChanged = true;
           const docSummary = (apt.doctors || [])
-            .map((doc) => `${doc.name}${doc.dept ? '·' + doc.dept : ''}(${doc.time})`)
+            .map((doc) => {
+              const isExam = doc.type === 'exam';
+              const name = (doc.name || '').trim();
+              const formattedName = isExam
+                ? (name.endsWith('검사') ? name : `${name} 검사`)
+                : (name.endsWith('교수') ? name : `${name} 교수`);
+              return `${formattedName}${doc.dept ? '·' + doc.dept : ''}(${doc.time})`;
+            })
             .join(', ');
           const fastingNotice = apt.fastingRequired ? ' ⚠️ 금식 여부를 꼭 확인하세요.' : '';
           const noteNotice = apt.note ? ` (${apt.note})` : '';
           sendToAll({
-            title: `[내일 병원 방문] ${patientName}님 ${apt.hospitalName} 진료 안내`,
-            body: `내일 ${apt.hospitalName} 일정: ${docSummary}.${fastingNotice}${noteNotice}`
+            title: `[내일 병원 방문] ${patientName}님 ${apt.hospitalName} 진료/검사 안내`,
+            body: `내일 ${apt.hospitalName} 일정: ${docSummary}.${fastingNotice}${noteNotice}`,
+            url: `/?target=apt_${apt.id}`,
+            target: `apt_${apt.id}`
           });
         }
       }
     }
 
-    // 2) 방문 당일 진료 N시간 전(기본: 3시간 전) 각 교수/검사별 알림
-    // 알림 예정 시각(alertMin)부터 실제 진료 시각(docTotalMin) 직전까지 미발송 시 즉시 발송 보장!
+    // 2) 방문 당일 진료/검사 알림 (N시간 전 알림 + 30분 전 추가 리마인더 알림)
     if (apt.date === dateKey) {
       const hoursBefore = apt.hoursBefore !== undefined ? Number(apt.hoursBefore) : 3;
+      const notify30MinEnabled = apt.notify30Min !== false;
+
       (apt.doctors || []).forEach((doc) => {
         if (!doc.time) return;
         const [dh, dm] = doc.time.split(':').map(Number);
         const docTotalMin = (dh || 0) * 60 + (dm || 0);
         const alertMin = docTotalMin - (hoursBefore * 60);
+        const isExam = doc.type === 'exam';
+        const cleanName = (doc.name || '').trim();
+        const displayName = isExam
+          ? (cleanName.endsWith('검사') ? cleanName : `${cleanName} 검사`)
+          : (cleanName.endsWith('교수') ? cleanName : `${cleanName} 교수`);
+        const category = isExam ? '검사' : '진료';
+        const fastingNotice = apt.fastingRequired ? ' ⚠️ 금식 여부를 확인하세요!' : '';
+        const noteNotice = apt.note ? ` (${apt.note})` : '';
 
-        // N시간 전 시점부터 진료 시작 시각 전까지 아직 안 보냈으면 즉시 발송
+        // 2-1) N시간 전 시점부터 진료 시작 시각 전까지 아직 안 보냈으면 즉시 발송 (Catch-up 보장)
         if (alertMin >= 0 && nowMin >= alertMin && nowMin < docTotalMin) {
           const notifyKey = `apt_doc_${apt.id}_${doc.id || doc.name}_${doc.time}_${dateKey}`;
           if (!data.notifiedKeys[notifyKey]) {
             data.notifiedKeys[notifyKey] = new Date().toISOString();
             dataChanged = true;
-            const isProf = doc.name.includes('교수');
-            const label = isProf ? `${doc.name} 진료` : `${doc.name}`;
-            const fastingNotice = apt.fastingRequired ? ' ⚠️ 금식 여부를 확인하세요!' : '';
-            const noteNotice = apt.note ? ` (${apt.note})` : '';
             sendToAll({
-              title: `[병원 ${hoursBefore}시간 전] ${label} 안내`,
-              body: `${patientName}님 ${apt.hospitalName} ${label}(${doc.time}${doc.dept ? '·' + doc.dept : ''}) ${hoursBefore}시간 전입니다.${fastingNotice}${noteNotice}`
+              title: `[병원 ${hoursBefore}시간 전] ${displayName} 안내`,
+              body: `${patientName}님 ${apt.hospitalName} ${displayName}(${doc.time}${doc.dept ? '·' + doc.dept : ''}) ${hoursBefore}시간 전입니다.${fastingNotice}${noteNotice}`,
+              url: `/?target=apt_${apt.id}`,
+              target: `apt_${apt.id}`
+            });
+          }
+        }
+
+        // 2-2) 검사/진료 30분 전 추가 리마인더 알림 (30분 전부터 시작 시각 전까지 미발송 시 즉시 발송)
+        const alertMin30 = docTotalMin - 30;
+        if (notify30MinEnabled && alertMin30 >= 0 && nowMin >= alertMin30 && nowMin < docTotalMin) {
+          const notifyKey30 = `apt_doc_30m_${apt.id}_${doc.id || doc.name}_${doc.time}_${dateKey}`;
+          if (!data.notifiedKeys[notifyKey30]) {
+            data.notifiedKeys[notifyKey30] = new Date().toISOString();
+            dataChanged = true;
+            const fastingUrgent = apt.fastingRequired ? ' ⚠️ 금식 상태를 유지해주세요!' : '';
+            sendToAll({
+              title: `[${category} 30분 전] ${displayName} 준비 ⏰`,
+              body: `${patientName}님 30분 뒤(${doc.time}) ${apt.hospitalName} ${displayName}(${doc.dept ? doc.dept : ''}) 일정이 있습니다. 늦지 않게 이동 및 준비해 주세요!${fastingUrgent}${noteNotice}`,
+              url: `/?target=apt_${apt.id}`,
+              target: `apt_${apt.id}`
             });
           }
         }

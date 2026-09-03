@@ -43,6 +43,18 @@ body {
   font-size: 11px !important;
   padding: 6px 10px !important;
 }
+.manual-push-btn {
+  background: #F0FDF4 !important;
+  color: #166534 !important;
+  border-color: #BBF7D0 !important;
+  font-weight: 600 !important;
+  font-size: 11px !important;
+  padding: 6px 10px !important;
+}
+.manual-push-btn:hover {
+  background: #DCFCE7 !important;
+  border-color: #86EFAC !important;
+}
 .emergency-call-group {
   display: flex;
   align-items: center;
@@ -751,5 +763,126 @@ body {
     font-size: 0.72rem;
     padding: 4px 8px;
   }
+}
+
+/* 수동 알림 모달 템플릿 칩 */
+.quick-template-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+  margin-bottom: 8px;
+}
+.quick-template-chips .quick-msg-btn {
+  font-size: 0.8rem;
+  padding: 5px 10px;
+  background: var(--surface);
+  transition: all 0.15s ease;
+}
+.quick-template-chips .quick-msg-btn:hover {
+  background: var(--surface-alt);
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+/* 병원 일정 카드 개별 즉시 알림 버튼 */
+.apt-notif-btn {
+  background: #F0FDF4 !important;
+  color: #166534 !important;
+  border-color: #BBF7D0 !important;
+  font-weight: 600 !important;
+}
+.apt-notif-btn:hover {
+  background: #DCFCE7 !important;
+  border-color: #86EFAC !important;
+}
+
+/* 푸시 알림 클릭 시 대상 항목으로 스크롤 및 펄스 하이라이트 애니메이션 */
+@keyframes highlightGlow {
+  0% {
+    box-shadow: 0 0 0 0 rgba(47, 111, 98, 0.75);
+    outline: 3px solid var(--primary);
+    background-color: rgba(47, 111, 98, 0.14);
+    transform: scale(1.01);
+  }
+  30% {
+    box-shadow: 0 0 0 12px rgba(47, 111, 98, 0.25);
+    outline: 3px solid var(--primary);
+    background-color: rgba(47, 111, 98, 0.2);
+    transform: scale(1.02);
+  }
+  65% {
+    box-shadow: 0 0 0 6px rgba(47, 111, 98, 0.12);
+    outline: 3px solid var(--primary);
+    background-color: rgba(47, 111, 98, 0.08);
+    transform: scale(1.01);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(47, 111, 98, 0);
+    outline: 3px solid transparent;
+    background-color: transparent;
+    transform: scale(1);
+  }
+}
+
+.highlight-pulse {
+  animation: highlightGlow 3.5s ease-out forwards !important;
+  border-radius: 12px;
+  position: relative;
+  z-index: 20;
+  transition: transform 0.3s ease;
+}
+
+/* 병원 일정 진료/검사 카테고리 칩 및 토글 버튼 */
+.apt-cat-chip {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 4px;
+  margin-right: 6px;
+  letter-spacing: -0.01em;
+  vertical-align: middle;
+}
+.apt-cat-chip.clinic {
+  background: #EFF6FF;
+  color: #1D4ED8;
+  border: 1px solid #BFDBFE;
+}
+.apt-cat-chip.exam {
+  background: #FDF4FF;
+  color: #9333EA;
+  border: 1px solid #F5D0FE;
+}
+
+.apt-type-toggle-group {
+  display: inline-flex;
+  gap: 3px;
+  background: var(--surface);
+  padding: 2px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+}
+.apt-type-toggle-btn {
+  border: none;
+  background: transparent;
+  padding: 3px 8px;
+  font-size: 0.74rem;
+  font-weight: 500;
+  border-radius: 4px;
+  cursor: pointer;
+  color: var(--ink-soft);
+  transition: all 0.15s ease;
+}
+.apt-type-toggle-btn.active.clinic {
+  background: #2563EB;
+  color: #fff;
+  font-weight: 600;
+}
+.apt-type-toggle-btn.active.exam {
+  background: #9333EA;
+  color: #fff;
+  font-weight: 600;
 }
 

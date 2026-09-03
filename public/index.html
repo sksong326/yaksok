@@ -23,6 +23,7 @@
       <div class="header-action-group">
         <div class="notif-btn-row">
           <button id="notifBtn" class="btn-pill btn-outline">알림 켜기</button>
+          <button id="manualPushBtn" class="btn-pill btn-outline manual-push-btn" title="가족 기기로 직접 알림 발송">📢 직접 알림</button>
           <button id="testPushBtn" class="btn-pill btn-outline test-push-btn" title="알림 테스트 발송">🔔 테스트</button>
         </div>
         <div class="emergency-call-group">
@@ -339,10 +340,13 @@
       <label class="field-label mt">방문 날짜</label>
       <input id="aptDateInput" type="date" class="field-input" />
 
-      <label class="field-label mt">교수(의사) 진료 일정</label>
-      <p class="muted-text" style="margin:2px 0 6px; font-size:0.8rem">한 날에 여러 교수님을 만난다면 각각 시간과 함께 추가하세요.</p>
+      <label class="field-label mt">진료 및 검사 세부 일정</label>
+      <p class="muted-text" style="margin:2px 0 6px; font-size:0.8rem">진료와 검사를 구분하여 등록할 수 있어요. (진료는 '교수', 검사는 '검사'로 자동 분류)</p>
       <div id="aptDoctorItems" class="bulk-items-list"></div>
-      <button id="aptAddDoctorBtn" type="button" class="btn-pill btn-outline btn-block mt-sm">+ 교수(진료) 추가</button>
+      <div class="apt-add-btn-group" style="display:flex; gap:8px; margin-top:8px;">
+        <button id="aptAddClinicBtn" type="button" class="btn-pill btn-outline" style="flex:1;">+ 🩺 진료 추가</button>
+        <button id="aptAddExamBtn" type="button" class="btn-pill btn-outline" style="flex:1;">+ 🔬 검사 추가</button>
+      </div>
 
       <label class="field-label mt">알림 시간 설정</label>
       <div class="alarm-setting-box">
@@ -367,7 +371,15 @@
             <option value="4">4시간 전</option>
           </select>
         </div>
-        <p class="hint-text" style="margin:2px 0 10px 24px">각 교수님 진료 시간 3시간 전에 각각 알림이 옵니다.</p>
+        <p class="hint-text" style="margin:2px 0 10px 24px">각 교수님 진료 시간 N시간 전에 각각 알림이 옵니다.</p>
+
+        <div class="alarm-setting-row">
+          <label class="checkbox-label">
+            <input type="checkbox" id="aptNotify30Min" checked />
+            <span>⏰ 진료/검사 30분 전 추가 리마인더 알림</span>
+          </label>
+        </div>
+        <p class="hint-text" style="margin:2px 0 10px 24px">진료 및 검사 시작 30분 전에 이동 및 대기 안내 알림이 한 번 더 옵니다.</p>
 
         <div class="alarm-setting-row" style="margin-top: 10px; border-top: 1px dashed var(--line); padding-top: 8px;">
           <label class="checkbox-label" style="color: var(--danger); font-weight: 600;">
@@ -381,6 +393,44 @@
       <input id="aptNoteInput" class="field-input" placeholder="예: 신분증 지참, 전날 밤 10시부터 물 금지" />
 
       <button id="aptSaveBtn" class="btn-pill btn-primary btn-block mt">저장하기</button>
+    </div>
+  </div>
+
+  <!-- 수동 직접 알림 발송 모달 -->
+  <div id="manualPushModal" class="modal-overlay hidden">
+    <div class="modal-shell" style="max-width: 460px;">
+      <div class="modal-head">
+        <h3>📢 직접 알림(푸시) 보내기</h3>
+        <button class="icon-btn" data-close-modal="manualPushModal">✕</button>
+      </div>
+      <p class="muted-text" style="margin-top:0">
+        등록된 모든 가족 기기(스마트폰/태블릿)로 지금 즉시 소리와 함께 알림을 보냅니다.
+      </p>
+
+      <label class="field-label">⚡ 빠른 문구 템플릿</label>
+      <div class="quick-template-chips">
+        <button type="button" class="btn-pill btn-small btn-outline quick-msg-btn" data-title="💊 약 챙겨드세요!" data-body="약속 시간이에요~ 잊지 마시고 약 챙겨드세요!" data-target="today">💊 복약 알림</button>
+        <button type="button" class="btn-pill btn-small btn-outline quick-msg-btn" data-title="🏥 병원 갈 준비해주세요!" data-body="곧 병원 진료/검사 시간입니다. 예약 시간 늦지 않게 준비해주세요!" data-target="apt">🏥 병원 알림</button>
+        <button type="button" class="btn-pill btn-small btn-outline quick-msg-btn" data-title="⏰ 검사 30분 전이에요" data-body="검사 30분 전입니다! 화장실 다녀오시고 검사실 앞에서 대기해주세요." data-target="apt">⏰ 검사 30분전</button>
+        <button type="button" class="btn-pill btn-small btn-outline quick-msg-btn" data-title="💧 따뜻한 물 한 잔 드세요" data-body="수분 보충 시간이에요. 물 한 컵 천천히 드세요~" data-target="none">💧 물 한 잔</button>
+        <button type="button" class="btn-pill btn-small btn-outline quick-msg-btn" data-title="🍚 식사 맛있게 하세요" data-body="식사 맛있게 하시고, 식후 약도 잊지 마세요!" data-target="today">🍚 식사 챙기기</button>
+      </div>
+
+      <label class="field-label mt">알림 제목</label>
+      <input id="manualPushTitleInput" class="field-input" placeholder="예: 약 챙겨드세요!" value="약 챙겨드세요!" />
+
+      <label class="field-label mt">알림 내용</label>
+      <textarea id="manualPushBodyInput" class="field-input" rows="3" placeholder="예: 아빠, 지금 약 드실 시간이에요. 드시고 체크해주세요~" style="resize: vertical; font-family: inherit;">약속 시간이에요~ 잊지 마시고 약 챙겨드세요!</textarea>
+
+      <label class="field-label mt">알림 클릭 시 이동 위치</label>
+      <select id="manualPushTargetSelect" class="field-input">
+        <option value="today">오늘의 복약 목록 (약 체크 화면)</option>
+        <option value="apt">🏥 병원 일정 (캘린더)</option>
+        <option value="diet">🥗 식단 관리 (음식 목록)</option>
+        <option value="none">기본 (메인 첫 화면)</option>
+      </select>
+
+      <button id="manualPushSendBtn" class="btn-pill btn-primary btn-block mt">🚀 지금 모든 기기로 알림 보내기</button>
     </div>
   </div>
 

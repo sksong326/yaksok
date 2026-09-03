@@ -533,3 +533,97 @@ body {
   accent-color: var(--primary);
   cursor: pointer;
 }
+
+/* ---- 엄마아빠를 위한 원클릭 시점별(식전/식후) 일괄 복약 버튼 바 ---- */
+.quick-batch-wrap {
+  background: var(--surface-alt);
+  border-radius: 16px;
+  padding: 12px 14px;
+  margin-bottom: 14px;
+  border: 1px solid var(--line);
+}
+.quick-batch-label {
+  font-size: 0.83rem;
+  font-weight: 700;
+  color: var(--ink);
+  margin: 0 0 8px 2px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.quick-batch-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.quick-batch-btn {
+  min-height: 42px;
+  border-radius: 12px;
+  padding: 8px 14px;
+  font-size: 0.88rem;
+  font-weight: 700;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  transition: all 0.15s ease;
+  border: 1.5px solid transparent;
+  user-select: none;
+  touch-action: manipulation;
+}
+.quick-batch-btn:hover {
+  transform: translateY(-1px);
+  filter: brightness(0.97);
+}
+.quick-batch-btn:active {
+  transform: translateY(1px);
+}
+/* 식전: 빨강 계열 */
+.quick-batch-btn.pre {
+  background: #FEE2E2;
+  color: #DC2626;
+  border-color: #FECACA;
+}
+.quick-batch-btn.pre:hover {
+  background: #FECACA;
+}
+/* 식후: 파랑 계열 */
+.quick-batch-btn.post {
+  background: #DBEAFE;
+  color: #2563EB;
+  border-color: #BFDBFE;
+}
+.quick-batch-btn.post:hover {
+  background: #BFDBFE;
+}
+/* 취침전: 초록 계열 */
+.quick-batch-btn.bed {
+  background: #DCFCE7;
+  color: #16A34A;
+  border-color: #BBF7D0;
+}
+.quick-batch-btn.bed:hover {
+  background: #BBF7D0;
+}
+
+/* 해당 시점의 약을 모두 먹었을 때(완료 상태) */
+.quick-batch-btn.all-done {
+  background: #F0FDF4 !important;
+  color: #15803D !important;
+  border-color: #86EFAC !important;
+  box-shadow: inset 0 1px 2px rgba(0,0,0,0.05);
+}
+.quick-batch-btn.all-done:hover {
+  background: #DCFCE7 !important;
+}
+.quick-batch-btn .badge-count {
+  font-size: 0.78rem;
+  padding: 2px 6px;
+  border-radius: 9999px;
+  background: rgba(0,0,0,0.07);
+}
+.quick-batch-btn.all-done .badge-count {
+  background: rgba(21,128,61,0.15);
+}
+

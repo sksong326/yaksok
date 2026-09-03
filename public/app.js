@@ -1,13 +1,31 @@
 const WEEKDAYS = ['일', '월', '화', '수', '목', '금', '토'];
 const PATIENT_COLORS = ['#2F6F62', '#E8A33D', '#D9645B', '#5B7FBF', '#8B6FB3', '#3F9B7A', '#C77DAA'];
 
-let state = { patients: [], medications: [], logs: {}, diets: [], exercises: [] };
+// 복약 시점 7종 및 색상 타입 (식전: pre/빨강, 식후: post/파랑, 취침전: bed/초록)
+const TIMING_SLOTS = [
+  { slot: '아침식전', type: 'pre',  defaultTime: '07:30' },
+  { slot: '아침식후', type: 'post', defaultTime: '08:30' },
+  { slot: '점심식전', type: 'pre',  defaultTime: '11:30' },
+  { slot: '점심식후', type: 'post', defaultTime: '12:30' },
+  { slot: '저녁식전', type: 'pre',  defaultTime: '17:30' },
+  { slot: '저녁식후', type: 'post', defaultTime: '18:30' },
+  { slot: '취침전',   type: 'bed',  defaultTime: '22:00' },
+];
+
+let state = { patients: [], medications: [], logs: {}, diets: [] };
 let activeTab = 'all';
 let editingMedId = null;
 let editingDietId = null;
 let dietStatusDraft = 'ok';
 let bulkDaysDraft = [0, 1, 2, 3, 4, 5, 6];
 let bulkItemsDraft = [];
+
+// 목록 접기/펼치기 상태 (세로 스크롤을 줄이기 위해 기본 접어둠)
+let isDietCollapsed = true;
+let isMedsCollapsed = true;
+let currentBulkSlot = '아침식후';
+let currentMedSlot = '아침식후';
+let medTimeSlotsDraft = {};
 
 const STATUS_LABEL = { ok: '먹어도 돼요', caution: '주의해서 조금만', avoid: '먹으면 안 돼요' };
 const STATUS_ICON = { ok: '✅', caution: '⚠️', avoid: '⛔' };
@@ -17,6 +35,28 @@ function dateKey(d) { return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(
 function nowHM() { const d = new Date(); return `${pad(d.getHours())}:${pad(d.getMinutes())}`; }
 function timeToMin(t) { const [h, m] = t.split(':').map(Number); return h * 60 + m; }
 function todayKey() { return dateKey(new Date()); }
+
+// 복약 시점(식전/식후/취침전) 자동 판별 및 객체 반환
+function inferTiming(timeStr, customSlot) {
+  if (customSlot) {
+    const match = TIMING_SLOTS.find((s) => s.slot === customSlot);
+    if (match) return match;
+  }
+  if (!timeStr) return TIMING_SLOTS[1]; // 기본: 아침식후
+  const [h, m] = timeStr.split(':').map(Number);
+  const totalMin = (h || 0) * 60 + (m || 0);
+
+  let slotName = '아침식후';
+  if (totalMin >= 300 && totalMin < 495) slotName = '아침식전';       // 05:00 ~ 08:15
+  else if (totalMin >= 495 && totalMin < 660) slotName = '아침식후';  // 08:15 ~ 11:00
+  else if (totalMin >= 660 && totalMin < 735) slotName = '점심식전';  // 11:00 ~ 12:15
+  else if (totalMin >= 735 && totalMin < 960) slotName = '점심식후';  // 12:15 ~ 16:00
+  else if (totalMin >= 960 && totalMin < 1095) slotName = '저녁식전'; // 16:00 ~ 18:15
+  else if (totalMin >= 1095 && totalMin < 1260) slotName = '저녁식후';// 18:15 ~ 21:00
+  else slotName = '취침전';                                          // 21:00 ~ 04:59
+
+  return TIMING_SLOTS.find((s) => s.slot === slotName) || TIMING_SLOTS[1];
+}
 
 async function api(path, options) {
   const res = await fetch(path, {
@@ -41,11 +81,8 @@ function render() {
   if (!hasPatients) return;
   renderToday();
   renderWeek();
-  renderExcelSection();
   renderDiet();
   renderMeds();
-  renderExercises();
-  renderReminderSettings();
   renderDeleteBtn();
 }
 
@@ -75,6 +112,32 @@ function makeTabChip(label, id, color) {
   return btn;
 }
 
+function updateCollapsibleStates() {
+  const dietBody = document.getElementById('dietCollapseBody');
+  const dietArrow = document.getElementById('dietCollapseArrow');
+  const medsBody = document.getElementById('medsCollapseBody');
+  const medsArrow = document.getElementById('medsCollapseArrow');
+
+  if (dietBody && dietArrow) {
+    dietBody.classList.toggle('collapsed', isDietCollapsed);
+    dietArrow.classList.toggle('open', !isDietCollapsed);
+  }
+  if (medsBody && medsArrow) {
+    medsBody.classList.toggle('collapsed', isMedsCollapsed);
+    medsArrow.classList.toggle('open', !isMedsCollapsed);
+  }
+}
+
+function toggleDietCollapse(forceState) {
+  isDietCollapsed = typeof forceState === 'boolean' ? forceState : !isDietCollapsed;
+  updateCollapsibleStates();
+}
+
+function toggleMedsCollapse(forceState) {
+  isMedsCollapsed = typeof forceState === 'boolean' ? forceState : !isMedsCollapsed;
+  updateCollapsibleStates();
+}
+
 function scheduleToday() {
   const items = [];
   const tKey = todayKey();
@@ -85,7 +148,19 @@ function scheduleToday() {
     if (!patient) return;
     med.times.forEach((time) => {
       const key = `${tKey}|${med.id}|${time}`;
-      items.push({ key, time, medId: med.id, medName: med.name, dosage: med.dosage, patientId: patient.id, patientName: patient.name, color: patient.color, taken: !!state.logs[key] });
+      const slot = (med.timeSlots && med.timeSlots[time]) || inferTiming(time).slot;
+      items.push({
+        key,
+        time,
+        slot,
+        medId: med.id,
+        medName: med.name,
+        dosage: med.dosage,
+        patientId: patient.id,
+        patientName: patient.name,
+        color: patient.color,
+        taken: !!state.logs[key],
+      });
     });
   });
   items.sort((a, b) => timeToMin(a.time) - timeToMin(b.time));
@@ -120,12 +195,16 @@ function renderTodayItem(item) {
   pocket.onclick = () => toggleTaken(item);
   li.appendChild(pocket);
 
+  const timingInfo = inferTiming(item.time, item.slot);
   const main = document.createElement('div');
   main.className = 'today-item-main';
   const titleRow = document.createElement('div');
   titleRow.className = 'today-item-title-row';
-  const timeText = item.time;
-  titleRow.innerHTML = `<span class="time-mono">${escapeHtml(timeText)}</span><span>${escapeHtml(item.medName)}</span>` + (item.dosage ? `<span class="muted-text" style="margin:0">· ${escapeHtml(item.dosage)}</span>` : '');
+  titleRow.innerHTML = `
+    <span class="timing-badge timing-${timingInfo.type}">${timingInfo.slot}</span>
+    <span class="time-mono">${item.time}</span>
+    <span>${escapeHtml(item.medName)}</span>
+  ` + (item.dosage ? `<span class="muted-text" style="margin:0">· ${escapeHtml(item.dosage)}</span>` : '');
   main.appendChild(titleRow);
   if (activeTab === 'all') {
     const tag = document.createElement('div');
@@ -223,6 +302,7 @@ function renderDiet() {
   const addBtn = document.getElementById('addDietBtn');
   const listMsg = document.getElementById('dietListSelectMsg');
   const list = document.getElementById('dietList');
+  const countBadge = document.getElementById('dietCountBadge');
 
   if (activeTab === 'all') {
     askBox.classList.add('hidden');
@@ -230,6 +310,8 @@ function renderDiet() {
     addBtn.classList.add('hidden');
     listMsg.classList.remove('hidden');
     list.innerHTML = '';
+    if (countBadge) countBadge.classList.add('hidden');
+    updateCollapsibleStates();
     return;
   }
   askBox.classList.remove('hidden');
@@ -241,6 +323,12 @@ function renderDiet() {
   document.getElementById('dietAskInput').value = '';
 
   const items = state.diets.filter((d) => d.patientId === activeTab);
+  if (countBadge) {
+    countBadge.textContent = `${items.length}개`;
+    countBadge.classList.remove('hidden');
+  }
+  updateCollapsibleStates();
+
   list.innerHTML = '';
   if (items.length === 0) {
     const p = document.createElement('p');
@@ -352,6 +440,7 @@ async function saveDiet() {
     state.diets.push(created);
   }
   closeModal('dietModal');
+  isDietCollapsed = false; // 등록 후 사용자가 바로 볼 수 있도록 펼침
   render();
 }
 async function removeDiet(id) {
@@ -361,155 +450,33 @@ async function removeDiet(id) {
   render();
 }
 
-// ---------------- 엑셀로 한 번에 등록 ----------------
-let excelParsed = null; // 서버가 파싱해준 결과
-let excelIncluded = { medications: [], diets: [] }; // 체크박스 상태
-
-function renderExcelSection() {
-  const box = document.getElementById('excelBox');
-  const msg = document.getElementById('excelSelectMsg');
-  if (activeTab === 'all') {
-    box.classList.add('hidden');
-    msg.classList.remove('hidden');
-    return;
-  }
-  box.classList.remove('hidden');
-  msg.classList.add('hidden');
-}
-
-document.getElementById('excelPickBtn').onclick = () => document.getElementById('excelFileInput').click();
-document.getElementById('excelFileInput').onchange = (e) => {
-  const file = e.target.files[0];
-  document.getElementById('excelFileName').textContent = file ? file.name : '';
-  document.getElementById('excelUploadBtn').disabled = !file;
-  document.getElementById('excelPreview').classList.add('hidden');
-};
-
-document.getElementById('excelUploadBtn').onclick = async () => {
-  const file = document.getElementById('excelFileInput').files[0];
-  if (!file) return;
-  const btn = document.getElementById('excelUploadBtn');
-  btn.disabled = true;
-  btn.textContent = '읽는 중...';
-  try {
-    const formData = new FormData();
-    formData.append('file', file);
-    const res = await fetch('/api/parse-excel', { method: 'POST', body: formData });
-    const data = await res.json();
-    if (!res.ok) { alert(data.error || '엑셀을 읽는 중 문제가 생겼어요.'); return; }
-    excelParsed = data;
-    excelIncluded.medications = data.medications.map((r) => r.valid);
-    excelIncluded.diets = data.diets.map((r) => r.valid);
-    renderExcelPreview();
-  } catch (e) {
-    alert('업로드 중 문제가 생겼어요. 인터넷 연결을 확인해주세요.');
-  } finally {
-    btn.disabled = false;
-    btn.textContent = '업로드해서 미리보기';
-  }
-};
-
-function renderExcelPreview() {
-  const wrap = document.getElementById('excelPreview');
-  wrap.classList.remove('hidden');
-  wrap.innerHTML = '';
-
-  if (!excelParsed || (excelParsed.medications.length === 0 && excelParsed.diets.length === 0)) {
-    wrap.innerHTML = '<p class="excel-empty-note">읽을 수 있는 내용이 없었어요. 템플릿 형식과 같은지 확인해주세요.</p>';
-    return;
-  }
-
-  if (excelParsed.medications.length > 0) {
-    const group = document.createElement('div');
-    group.className = 'excel-preview-group';
-    group.innerHTML = `<p class="excel-preview-title">복약 일정 ${excelParsed.medications.length}개</p>`;
-    excelParsed.medications.forEach((r, idx) => group.appendChild(renderExcelMedRow(r, idx)));
-    wrap.appendChild(group);
-  }
-  if (excelParsed.diets.length > 0) {
-    const group = document.createElement('div');
-    group.className = 'excel-preview-group';
-    group.innerHTML = `<p class="excel-preview-title">식단 목록 ${excelParsed.diets.length}개</p>`;
-    excelParsed.diets.forEach((r, idx) => group.appendChild(renderExcelDietRow(r, idx)));
-    wrap.appendChild(group);
-  }
-
-  const confirmBtn = document.createElement('button');
-  confirmBtn.className = 'btn-pill btn-primary btn-block mt';
-  confirmBtn.textContent = '체크된 항목 등록하기';
-  confirmBtn.onclick = confirmExcelImport;
-  wrap.appendChild(confirmBtn);
-}
-
-function renderExcelMedRow(r, idx) {
-  const row = document.createElement('label');
-  row.className = 'excel-row' + (r.valid ? '' : ' invalid');
-  const cb = document.createElement('input');
-  cb.type = 'checkbox';
-  cb.checked = excelIncluded.medications[idx];
-  cb.disabled = !r.valid;
-  cb.onchange = (e) => { excelIncluded.medications[idx] = e.target.checked; };
-  const text = document.createElement('div');
-  text.className = 'excel-row-text';
-  text.innerHTML = r.valid
-    ? `<b>${escapeHtml((r.timesDisplay || r.times).join(', '))}</b> · ${escapeHtml(r.name)}${r.dosage ? ' · ' + escapeHtml(r.dosage) : ''} · ${r.days.length === 7 ? '매일' : r.days.map((d) => WEEKDAYS[d]).join(' ')}`
-    : `${escapeHtml(r.name || '(이름 없음)')} <span class="excel-row-warning">${r.row}행: 시간 또는 이름을 확인해주세요 (입력값: "${escapeHtml(r.timeRaw)}")</span>`;
-  row.appendChild(cb);
-  row.appendChild(text);
-  return row;
-}
-
-function renderExcelDietRow(r, idx) {
-  const row = document.createElement('label');
-  row.className = 'excel-row' + (r.valid ? '' : ' invalid');
-  const cb = document.createElement('input');
-  cb.type = 'checkbox';
-  cb.checked = excelIncluded.diets[idx];
-  cb.disabled = !r.valid;
-  cb.onchange = (e) => { excelIncluded.diets[idx] = e.target.checked; };
-  const text = document.createElement('div');
-  text.className = 'excel-row-text';
-  text.innerHTML = r.valid
-    ? `${STATUS_ICON[r.status]} <b>${escapeHtml(r.name)}</b> · ${STATUS_LABEL[r.status]}${r.note ? ' · ' + escapeHtml(r.note) : ''}`
-    : `${escapeHtml(r.name || '(이름 없음)')} <span class="excel-row-warning">${r.row}행: 상태(허용/주의/금지)를 확인해주세요 (입력값: "${escapeHtml(r.statusRaw)}")</span>`;
-  row.appendChild(cb);
-  row.appendChild(text);
-  return row;
-}
-
-async function confirmExcelImport() {
-  const meds = excelParsed.medications.filter((r, idx) => r.valid && excelIncluded.medications[idx]);
-  const diets = excelParsed.diets.filter((r, idx) => r.valid && excelIncluded.diets[idx]);
-  if (meds.length === 0 && diets.length === 0) { alert('등록할 항목을 선택해주세요.'); return; }
-
-  let dup = 0;
-  for (const m of meds) {
-    const created = await api('/api/medications', { method: 'POST', body: JSON.stringify({ patientId: activeTab, name: m.name, dosage: m.dosage, times: m.times, days: m.days }) });
-    if (created.duplicate) { dup += 1; } else { state.medications.push(created); }
-  }
-  for (const d of diets) {
-    const created = await api('/api/diets', { method: 'POST', body: JSON.stringify({ patientId: activeTab, name: d.name, status: d.status, note: d.note }) });
-    if (created.duplicate) { dup += 1; } else { state.diets.push(created); }
-  }
-
-  excelParsed = null;
-  document.getElementById('excelPreview').classList.add('hidden');
-  document.getElementById('excelFileInput').value = '';
-  document.getElementById('excelFileName').textContent = '';
-  document.getElementById('excelUploadBtn').disabled = true;
-  const newCount = meds.length + diets.length - dup;
-  alert(dup > 0 ? `${newCount}개 항목을 등록했어요. (이미 등록된 ${dup}개는 중복이라 건너뛰었어요)` : `${newCount}개 항목을 등록했어요.`);
-  render();
-}
-
 // ---------------- 시간대별 여러 약 한번에 등록 ----------------
 function openBulkMedModal() {
-  document.getElementById('bulkTimeInput').value = '08:00';
+  currentBulkSlot = '아침식후';
+  document.getElementById('bulkTimeInput').value = '08:30';
   bulkDaysDraft = [0, 1, 2, 3, 4, 5, 6];
   bulkItemsDraft = [{ name: '', dosage: '' }, { name: '', dosage: '' }];
+  renderBulkTimingPresets();
   renderBulkDays();
   renderBulkItems();
   document.getElementById('bulkMedModal').classList.remove('hidden');
+}
+function renderBulkTimingPresets() {
+  const wrap = document.getElementById('bulkTimingPresets');
+  if (!wrap) return;
+  wrap.innerHTML = '';
+  TIMING_SLOTS.forEach((s) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = `timing-preset-btn ${s.type}` + (currentBulkSlot === s.slot ? ' active' : '');
+    btn.textContent = s.slot;
+    btn.onclick = () => {
+      currentBulkSlot = s.slot;
+      document.getElementById('bulkTimeInput').value = s.defaultTime;
+      renderBulkTimingPresets();
+    };
+    wrap.appendChild(btn);
+  });
 }
 function renderBulkDays() {
   const wrap = document.getElementById('bulkDaysRow');
@@ -558,10 +525,14 @@ async function saveBulkMed() {
     alert('시간, 요일, 그리고 약 이름을 최소 1개는 입력해주세요.');
     return;
   }
-  const res = await api('/api/medications/bulk', { method: 'POST', body: JSON.stringify({ patientId: activeTab, time, days: bulkDaysDraft, items }) });
-  state.medications.push(...res.created);
-  if (res.skipped > 0) alert(`${res.created.length}개 등록, 이미 등록된 ${res.skipped}개는 건너뛰었어요.`);
+  const timeSlots = { [time]: currentBulkSlot };
+  const created = await api('/api/medications/bulk', {
+    method: 'POST',
+    body: JSON.stringify({ patientId: activeTab, time, timeSlots, days: bulkDaysDraft, items })
+  });
+  state.medications.push(...created);
   closeModal('bulkMedModal');
+  isMedsCollapsed = false; // 등록 후 바로 확인할 수 있도록 펼침
   render();
 }
 
@@ -569,17 +540,26 @@ function renderMeds() {
   const addBtn = document.getElementById('addMedBtn');
   const selectMsg = document.getElementById('medsSelectMsg');
   const list = document.getElementById('medsList');
+  const countBadge = document.getElementById('medsCountBadge');
   list.innerHTML = '';
 
   if (activeTab === 'all') {
     addBtn.classList.add('hidden');
     selectMsg.classList.remove('hidden');
+    if (countBadge) countBadge.classList.add('hidden');
+    updateCollapsibleStates();
     return;
   }
   addBtn.classList.remove('hidden');
   selectMsg.classList.add('hidden');
 
   const meds = state.medications.filter((m) => m.patientId === activeTab);
+  if (countBadge) {
+    countBadge.textContent = `${meds.length}개`;
+    countBadge.classList.remove('hidden');
+  }
+  updateCollapsibleStates();
+
   if (meds.length === 0) {
     const p = document.createElement('p');
     p.className = 'muted-text';
@@ -591,9 +571,15 @@ function renderMeds() {
     const row = document.createElement('div');
     row.className = 'med-item';
     const info = document.createElement('div');
+
+    const timesHtml = m.times.map((t) => {
+      const timing = inferTiming(t, m.timeSlots ? m.timeSlots[t] : null);
+      return `<span class="med-time-tag"><span class="timing-badge timing-${timing.type}">${timing.slot}</span><span class="time-mono">${t}</span></span>`;
+    }).join(' ');
+
     info.innerHTML = `
       <p class="med-item-name">${escapeHtml(m.name)}${m.dosage ? ' · ' + escapeHtml(m.dosage) : ''}</p>
-      <p class="med-item-times">${m.times.join(', ')}</p>
+      <div class="med-item-times-row">${timesHtml}</div>
       <p class="med-item-days">${m.days.length === 7 ? '매일' : m.days.slice().sort().map((d) => WEEKDAYS[d]).join(' ')}</p>
     `;
     const actions = document.createElement('div');
@@ -612,143 +598,6 @@ function renderMeds() {
     row.appendChild(actions);
     list.appendChild(row);
   });
-}
-
-// ---------------- 운동 알림 (권고 - 반복 없음) ----------------
-let editingExerciseId = null;
-let exerciseTimesDraft = [];
-let exerciseDaysDraft = [0, 1, 2, 3, 4, 5, 6];
-
-function renderExercises() {
-  const addBtn = document.getElementById('addExerciseBtn');
-  const selectMsg = document.getElementById('exerciseSelectMsg');
-  const hint = document.getElementById('exerciseHint');
-  const list = document.getElementById('exerciseList');
-  list.innerHTML = '';
-
-  if (activeTab === 'all') {
-    addBtn.classList.add('hidden');
-    selectMsg.classList.remove('hidden');
-    hint.classList.add('hidden');
-    return;
-  }
-  addBtn.classList.remove('hidden');
-  selectMsg.classList.add('hidden');
-  hint.classList.remove('hidden');
-
-  const items = state.exercises.filter((e) => e.patientId === activeTab);
-  if (items.length === 0) {
-    const p = document.createElement('p');
-    p.className = 'muted-text';
-    p.textContent = '등록된 운동 알림이 없어요.';
-    list.appendChild(p);
-    return;
-  }
-  items.forEach((ex) => {
-    const row = document.createElement('div');
-    row.className = 'med-item';
-    const info = document.createElement('div');
-    info.innerHTML = `
-      <p class="med-item-name">🏃 ${escapeHtml(ex.name)}</p>
-      <p class="med-item-times">${ex.times.join(', ')}</p>
-      <p class="med-item-days">${ex.days.length === 7 ? '매일' : ex.days.slice().sort().map((d) => WEEKDAYS[d]).join(' ')}</p>
-    `;
-    const actions = document.createElement('div');
-    actions.className = 'med-item-actions';
-    const editBtn = document.createElement('button');
-    editBtn.className = 'btn-pill btn-small btn-outline';
-    editBtn.textContent = '수정';
-    editBtn.onclick = () => openExerciseModal(ex);
-    const delBtn = document.createElement('button');
-    delBtn.className = 'danger-btn';
-    delBtn.textContent = '🗑';
-    delBtn.onclick = () => removeExercise(ex.id);
-    actions.appendChild(editBtn);
-    actions.appendChild(delBtn);
-    row.appendChild(info);
-    row.appendChild(actions);
-    list.appendChild(row);
-  });
-}
-
-function openExerciseModal(ex) {
-  editingExerciseId = ex ? ex.id : null;
-  document.getElementById('exerciseModalTitle').textContent = ex ? '운동 정보 수정' : '운동 추가';
-  document.getElementById('exerciseNameInput').value = ex ? ex.name : '';
-  exerciseTimesDraft = ex ? [...ex.times] : [];
-  exerciseDaysDraft = ex ? [...ex.days] : [0, 1, 2, 3, 4, 5, 6];
-  renderExerciseTimeChips();
-  renderExerciseDayToggles();
-  document.getElementById('exerciseModal').classList.remove('hidden');
-}
-function renderExerciseTimeChips() {
-  const wrap = document.getElementById('exerciseTimesChips');
-  wrap.innerHTML = '';
-  exerciseTimesDraft.forEach((t) => {
-    const chip = document.createElement('span');
-    chip.className = 'chip';
-    chip.innerHTML = `${escapeHtml(t)} <button>✕</button>`;
-    chip.querySelector('button').onclick = () => { exerciseTimesDraft = exerciseTimesDraft.filter((x) => x !== t); renderExerciseTimeChips(); };
-    wrap.appendChild(chip);
-  });
-}
-function renderExerciseDayToggles() {
-  const wrap = document.getElementById('exerciseDaysRow');
-  wrap.innerHTML = '';
-  WEEKDAYS.forEach((w, i) => {
-    const btn = document.createElement('button');
-    btn.className = 'day-toggle' + (exerciseDaysDraft.includes(i) ? ' active' : '');
-    btn.textContent = w;
-    btn.onclick = () => {
-      exerciseDaysDraft = exerciseDaysDraft.includes(i) ? exerciseDaysDraft.filter((x) => x !== i) : [...exerciseDaysDraft, i].sort();
-      renderExerciseDayToggles();
-    };
-    wrap.appendChild(btn);
-  });
-}
-async function saveExercise() {
-  const name = document.getElementById('exerciseNameInput').value.trim();
-  if (!name || exerciseTimesDraft.length === 0 || exerciseDaysDraft.length === 0) {
-    alert('운동 이름, 시간, 요일을 모두 입력해주세요.');
-    return;
-  }
-  const payload = { patientId: activeTab, name, times: exerciseTimesDraft, days: exerciseDaysDraft };
-  if (editingExerciseId) {
-    const updated = await api(`/api/exercises/${editingExerciseId}`, { method: 'PUT', body: JSON.stringify(payload) });
-    state.exercises = state.exercises.map((e) => (e.id === editingExerciseId ? updated : e));
-  } else {
-    const created = await api('/api/exercises', { method: 'POST', body: JSON.stringify(payload) });
-    state.exercises.push(created);
-  }
-  closeModal('exerciseModal');
-  render();
-}
-async function removeExercise(id) {
-  if (!confirm('이 운동 알림을 삭제할까요?')) return;
-  await api(`/api/exercises/${id}`, { method: 'DELETE' });
-  state.exercises = state.exercises.filter((e) => e.id !== id);
-  render();
-}
-
-// ---------------- 재알림 간격 설정 ----------------
-function renderReminderSettings() {
-  const box = document.getElementById('reminderBox');
-  const msg = document.getElementById('reminderSelectMsg');
-  if (activeTab === 'all') {
-    box.classList.add('hidden');
-    msg.classList.remove('hidden');
-    return;
-  }
-  box.classList.remove('hidden');
-  msg.classList.add('hidden');
-  const patient = state.patients.find((p) => p.id === activeTab);
-  document.getElementById('reminderIntervalInput').value = (patient && patient.reminderIntervalMin) || 15;
-}
-async function saveReminderInterval() {
-  const val = Number(document.getElementById('reminderIntervalInput').value) || 15;
-  const updated = await api(`/api/patients/${activeTab}`, { method: 'PUT', body: JSON.stringify({ reminderIntervalMin: val }) });
-  state.patients = state.patients.map((p) => (p.id === activeTab ? updated : p));
-  alert('재알림 간격을 저장했어요.');
 }
 
 function renderDeleteBtn() {
@@ -799,19 +648,45 @@ function openMedModal(med) {
   document.getElementById('medNameInput').value = med ? med.name : '';
   document.getElementById('medDosageInput').value = med ? med.dosage : '';
   medTimesDraft = med ? [...med.times] : [];
+  medTimeSlotsDraft = (med && med.timeSlots) ? { ...med.timeSlots } : {};
   medDaysDraft = med ? [...med.days] : [0, 1, 2, 3, 4, 5, 6];
+  currentMedSlot = '아침식후';
+  document.getElementById('medTimeInput').value = '08:30';
+  renderMedTimingPresets();
   renderTimeChips();
   renderDayToggles();
   document.getElementById('medModal').classList.remove('hidden');
+}
+function renderMedTimingPresets() {
+  const wrap = document.getElementById('medTimingPresets');
+  if (!wrap) return;
+  wrap.innerHTML = '';
+  TIMING_SLOTS.forEach((s) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = `timing-preset-btn ${s.type}` + (currentMedSlot === s.slot ? ' active' : '');
+    btn.textContent = s.slot;
+    btn.onclick = () => {
+      currentMedSlot = s.slot;
+      document.getElementById('medTimeInput').value = s.defaultTime;
+      renderMedTimingPresets();
+    };
+    wrap.appendChild(btn);
+  });
 }
 function renderTimeChips() {
   const wrap = document.getElementById('medTimesChips');
   wrap.innerHTML = '';
   medTimesDraft.forEach((t) => {
+    const timing = inferTiming(t, medTimeSlotsDraft[t]);
     const chip = document.createElement('span');
     chip.className = 'chip';
-    chip.innerHTML = `${escapeHtml(t)} <button>✕</button>`;
-    chip.querySelector('button').onclick = () => { medTimesDraft = medTimesDraft.filter((x) => x !== t); renderTimeChips(); };
+    chip.innerHTML = `<span class="timing-badge timing-${timing.type}" style="margin-right:4px">${timing.slot}</span>${t} <button>✕</button>`;
+    chip.querySelector('button').onclick = () => {
+      medTimesDraft = medTimesDraft.filter((x) => x !== t);
+      delete medTimeSlotsDraft[t];
+      renderTimeChips();
+    };
     wrap.appendChild(chip);
   });
 }
@@ -836,19 +711,16 @@ async function saveMed() {
     alert('약 이름, 시간, 요일을 모두 입력해주세요.');
     return;
   }
-  const payload = { patientId: activeTab, name, dosage, times: medTimesDraft, days: medDaysDraft };
+  const payload = { patientId: activeTab, name, dosage, times: medTimesDraft, timeSlots: medTimeSlotsDraft, days: medDaysDraft };
   if (editingMedId) {
     const updated = await api(`/api/medications/${editingMedId}`, { method: 'PUT', body: JSON.stringify(payload) });
     state.medications = state.medications.map((m) => (m.id === editingMedId ? updated : m));
   } else {
     const created = await api('/api/medications', { method: 'POST', body: JSON.stringify(payload) });
-    if (created.duplicate) {
-      alert('이미 같은 이름·시간·요일로 등록된 약이 있어요.');
-    } else {
-      state.medications.push(created);
-    }
+    state.medications.push(created);
   }
   closeModal('medModal');
+  isMedsCollapsed = false; // 등록 후 바로 확인할 수 있도록 펼침
   render();
 }
 async function removeMed(id) {
@@ -902,25 +774,42 @@ async function initPush() {
 // ---------------- 초기화 ----------------
 document.getElementById('emptyAddBtn').onclick = openPatientModal;
 document.getElementById('patientSaveBtn').onclick = savePatient;
-document.getElementById('addMedBtn').onclick = () => openBulkMedModal();
+
+// 복약 관리 및 식단 관리 접기/펼치기 토글
+const dietToggle = document.getElementById('dietHeaderToggle');
+if (dietToggle) {
+  dietToggle.onclick = () => toggleDietCollapse();
+  dietToggle.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleDietCollapse(); } };
+}
+const medsToggle = document.getElementById('medsHeaderToggle');
+if (medsToggle) {
+  medsToggle.onclick = () => toggleMedsCollapse();
+  medsToggle.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleMedsCollapse(); } };
+}
+
+document.getElementById('addMedBtn').onclick = (e) => {
+  e.stopPropagation();
+  openBulkMedModal();
+};
 document.getElementById('medTimeAddBtn').onclick = () => {
   const t = document.getElementById('medTimeInput').value;
-  if (t && !medTimesDraft.includes(t)) { medTimesDraft.push(t); renderTimeChips(); }
+  if (t && !medTimesDraft.includes(t)) {
+    medTimesDraft.push(t);
+    medTimeSlotsDraft[t] = currentMedSlot;
+    medTimesDraft.sort();
+    renderTimeChips();
+  }
 };
 document.getElementById('medSaveBtn').onclick = saveMed;
 document.getElementById('dietAskBtn').onclick = askDiet;
 document.getElementById('dietAskInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') askDiet(); });
-document.getElementById('addDietBtn').onclick = () => openDietModal(null);
+document.getElementById('addDietBtn').onclick = (e) => {
+  e.stopPropagation();
+  openDietModal(null);
+};
 document.getElementById('dietSaveBtn').onclick = saveDiet;
 document.getElementById('bulkAddRowBtn').onclick = () => { bulkItemsDraft.push({ name: '', dosage: '' }); renderBulkItems(); };
 document.getElementById('bulkSaveBtn').onclick = saveBulkMed;
-document.getElementById('addExerciseBtn').onclick = () => openExerciseModal(null);
-document.getElementById('exerciseTimeAddBtn').onclick = () => {
-  const t = document.getElementById('exerciseTimeInput').value;
-  if (t && !exerciseTimesDraft.includes(t)) { exerciseTimesDraft.push(t); renderExerciseTimeChips(); }
-};
-document.getElementById('exerciseSaveBtn').onclick = saveExercise;
-document.getElementById('reminderSaveBtn').onclick = saveReminderInterval;
 document.querySelectorAll('[data-close-modal]').forEach((btn) => {
   btn.onclick = () => closeModal(btn.getAttribute('data-close-modal'));
 });
@@ -928,3 +817,4 @@ document.querySelectorAll('[data-close-modal]').forEach((btn) => {
 loadData();
 initPush();
 setInterval(loadData, 30000); // 30초마다 최신 데이터로 갱신 (다른 기기에서 체크한 것도 반영)
+

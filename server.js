@@ -19,7 +19,7 @@ webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
 
 // ---- 아주 단순한 파일 기반 저장소 ----
 function loadData() {
-  const fallback = { patients: [], medications: [], logs: {}, subscriptions: [], diets: [] };
+  const fallback = { patients: [], medications: [], logs: {}, subscriptions: [], diets: [], appointments: [] };
   try {
     const parsed = JSON.parse(fs.readFileSync(DATA_FILE, 'utf-8'));
     return { ...fallback, ...parsed };
@@ -79,6 +79,8 @@ app.delete('/api/patients/:id', (req, res) => {
   const data = loadData();
   data.patients = data.patients.filter((p) => p.id !== req.params.id);
   data.medications = data.medications.filter((m) => m.patientId !== req.params.id);
+  data.diets = (data.diets || []).filter((d) => d.patientId !== req.params.id);
+  data.appointments = (data.appointments || []).filter((a) => a.patientId !== req.params.id);
   saveData(data);
   res.json({ ok: true });
 });
@@ -186,6 +188,55 @@ app.delete('/api/diets/:id', (req, res) => {
   res.json({ ok: true });
 });
 
+// ---- 병원 방문 일정 (캘린더) ----
+app.post('/api/appointments', (req, res) => {
+  const data = loadData();
+  const { patientId, hospitalName, date, doctors, fastingRequired, notifyPrevDay, prevDayTime, hoursBefore, note } = req.body;
+  if (!patientId || !hospitalName || !date || !Array.isArray(doctors) || doctors.length === 0) {
+    return res.status(400).json({ error: 'invalid appointment' });
+  }
+  const apt = {
+    id: uid('apt'),
+    patientId,
+    hospitalName: hospitalName.trim(),
+    date, // YYYY-MM-DD
+    doctors: doctors
+      .filter((doc) => doc.name && doc.name.trim())
+      .map((doc, idx) => ({
+        id: doc.id || uid(`doc_${idx}`),
+        name: doc.name.trim(),
+        time: doc.time || '10:00',
+        dept: (doc.dept || '').trim()
+      })),
+    fastingRequired: !!fastingRequired,
+    notifyPrevDay: notifyPrevDay !== undefined ? notifyPrevDay : true,
+    prevDayTime: prevDayTime || '21:00',
+    hoursBefore: hoursBefore !== undefined ? Number(hoursBefore) : 3,
+    note: (note || '').trim()
+  };
+  if (!data.appointments) data.appointments = [];
+  data.appointments.push(apt);
+  saveData(data);
+  res.json(apt);
+});
+
+app.put('/api/appointments/:id', (req, res) => {
+  const data = loadData();
+  if (!data.appointments) data.appointments = [];
+  const idx = data.appointments.findIndex((a) => a.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: 'not found' });
+  data.appointments[idx] = { ...data.appointments[idx], ...req.body, id: req.params.id };
+  saveData(data);
+  res.json(data.appointments[idx]);
+});
+
+app.delete('/api/appointments/:id', (req, res) => {
+  const data = loadData();
+  data.appointments = (data.appointments || []).filter((a) => a.id !== req.params.id);
+  saveData(data);
+  res.json({ ok: true });
+});
+
 // ---- 푸시 구독 ----
 app.post('/api/subscribe', (req, res) => {
   const data = loadData();
@@ -272,6 +323,61 @@ cron.schedule('* * * * *', async () => {
       title: `${slotPrefix}약속 시간이에요`,
       body: `${patient ? patient.name : ''} · ${med.name}${med.dosage ? ' · ' + med.dosage : ''} (${hm})`,
     });
+  });
+
+  // ---- 병원 방문 일정 알림 체크 ----
+  const tomorrowDate = new Date(d);
+  tomorrowDate.setDate(tomorrowDate.getDate() + 1);
+  const tomorrowKey = dateKeyKST(tomorrowDate);
+
+  (data.appointments || []).forEach((apt) => {
+    const patient = data.patients.find((p) => p.id === apt.patientId);
+    const patientName = patient ? patient.name : '가족';
+
+    // 1) 방문 전날 일괄 알림 (기본: 전날 21:00)
+    if (apt.date === tomorrowKey) {
+      const isNotifyDay = apt.notifyPrevDay !== false;
+      const targetTime = apt.prevDayTime || '21:00';
+      if (isNotifyDay && targetTime === hm) {
+        const notifyKey = `${dateKey}_prev_apt_${apt.id}_${hm}`;
+        if (!alreadyNotified.has(notifyKey)) {
+          alreadyNotified.add(notifyKey);
+          const docSummary = (apt.doctors || [])
+            .map((doc) => `${doc.name} 교수(${doc.time}${doc.dept ? '·' + doc.dept : ''})`)
+            .join(', ');
+          sendToAll({
+            title: `[내일 병원 방문] ${patientName}님 ${apt.hospitalName} 진료 안내`,
+            body: `내일 ${apt.hospitalName} 진료: ${docSummary}. 금식하셔야 되나요? 확인해주세요.`
+          });
+        }
+      }
+    }
+
+    // 2) 방문 당일 진료 N시간 전(기본: 3시간 전) 각 교수별 알림
+    if (apt.date === dateKey) {
+      const hoursBefore = apt.hoursBefore !== undefined ? Number(apt.hoursBefore) : 3;
+      (apt.doctors || []).forEach((doc) => {
+        if (!doc.time) return;
+        const [dh, dm] = doc.time.split(':').map(Number);
+        const docTotalMin = (dh || 0) * 60 + (dm || 0);
+        const alertMin = docTotalMin - (hoursBefore * 60);
+        if (alertMin >= 0) {
+          const alertH = Math.floor(alertMin / 60);
+          const alertM = alertMin % 60;
+          const alertHM = `${pad(alertH)}:${pad(alertM)}`;
+          if (alertHM === hm) {
+            const notifyKey = `${dateKey}_apt_doc_${apt.id}_${doc.id || doc.name}_${doc.time}`;
+            if (!alreadyNotified.has(notifyKey)) {
+              alreadyNotified.add(notifyKey);
+              sendToAll({
+                title: `[병원 방문 ${hoursBefore}시간 전] ${doc.name} 교수 진료 안내`,
+                body: `${patientName}님 ${apt.hospitalName} ${doc.name} 교수님 진료(${doc.time}${doc.dept ? '·' + doc.dept : ''}) ${hoursBefore}시간 전입니다. 금식하셔야 되나요? 확인해주세요.`
+              });
+            }
+          }
+        }
+      });
+    }
   });
 
   // 메모리 누수 방지: 자정 지나면 어제 알림 기록 정리

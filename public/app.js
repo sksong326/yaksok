@@ -12,13 +12,20 @@ const TIMING_SLOTS = [
   { slot: '취침전',   type: 'bed',  defaultTime: '22:00' },
 ];
 
-let state = { patients: [], medications: [], logs: {}, diets: [] };
+let state = { patients: [], medications: [], logs: {}, diets: [], appointments: [] };
 let activeTab = 'all';
 let editingMedId = null;
 let editingDietId = null;
 let dietStatusDraft = 'ok';
 let bulkDaysDraft = [0, 1, 2, 3, 4, 5, 6];
 let bulkItemsDraft = [];
+
+// 병원 일정(캘린더) 상태 변수
+let calYear = new Date().getFullYear();
+let calMonth = new Date().getMonth(); // 0 ~ 11
+let selectedCalDate = null; // YYYY-MM-DD
+let editingAptId = null;
+let aptDoctorsDraft = [];
 
 // 목록 접기/펼치기 상태 (세로 스크롤을 줄이기 위해 기본 접어둠)
 let isDietCollapsed = true;
@@ -81,6 +88,8 @@ function render() {
   if (!hasPatients) return;
   renderToday();
   renderWeek();
+  renderCalendar();
+  renderAppointments();
   renderDiet();
   renderMeds();
   renderDeleteBtn();
@@ -293,6 +302,357 @@ function renderWeek() {
     card.appendChild(grid);
     wrap.appendChild(card);
   });
+}
+
+// ---------------- 병원 방문 일정 (캘린더) ----------------
+function renderCalendar() {
+  const label = document.getElementById('calCurrentMonthLabel');
+  const grid = document.getElementById('calendarGrid');
+  if (!label || !grid) return;
+
+  label.textContent = `${calYear}년 ${calMonth + 1}월`;
+  grid.innerHTML = '';
+
+  const firstDay = new Date(calYear, calMonth, 1).getDay(); // 0(일) ~ 6(토)
+  const lastDate = new Date(calYear, calMonth + 1, 0).getDate(); // 이번달 말일
+  const prevLastDate = new Date(calYear, calMonth, 0).getDate(); // 지난달 말일
+
+  const tKey = todayKey();
+  const allApts = state.appointments || [];
+  const apts = activeTab === 'all' ? allApts : allApts.filter((a) => a.patientId === activeTab);
+
+  // 지난달 채우기
+  for (let i = firstDay - 1; i >= 0; i--) {
+    const dNum = prevLastDate - i;
+    const btn = document.createElement('div');
+    btn.className = 'cal-day other-month';
+    btn.innerHTML = `<span class="cal-day-num">${dNum}</span>`;
+    grid.appendChild(btn);
+  }
+
+  // 이번달 날짜 채우기
+  for (let day = 1; day <= lastDate; day++) {
+    const dayDate = new Date(calYear, calMonth, day);
+    const dayKey = dateKey(dayDate);
+    const dayOfWeek = dayDate.getDay();
+
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    let cls = 'cal-day';
+    if (dayOfWeek === 0) cls += ' sun';
+    if (dayOfWeek === 6) cls += ' sat';
+    if (dayKey === tKey) cls += ' today';
+    if (selectedCalDate === dayKey) cls += ' selected';
+
+    const dayApts = apts.filter((a) => a.date === dayKey);
+    if (dayApts.length > 0) cls += ' has-apt';
+
+    btn.className = cls;
+
+    let inner = `<span class="cal-day-num">${day}</span>`;
+    if (dayApts.length > 0) {
+      inner += `<span class="cal-apt-dot" title="${dayApts.length}건 진료">🏥</span>`;
+    }
+    btn.innerHTML = inner;
+
+    btn.onclick = () => {
+      if (selectedCalDate === dayKey) {
+        selectedCalDate = null; // 선택 해제
+      } else {
+        selectedCalDate = dayKey;
+      }
+      renderCalendar();
+      renderAppointments();
+    };
+
+    grid.appendChild(btn);
+  }
+
+  // 다음달 채우기 (7열 그리드 맞추기)
+  const totalCells = firstDay + lastDate;
+  const remaining = (7 - (totalCells % 7)) % 7;
+  for (let i = 1; i <= remaining; i++) {
+    const btn = document.createElement('div');
+    btn.className = 'cal-day other-month';
+    btn.innerHTML = `<span class="cal-day-num">${i}</span>`;
+    grid.appendChild(btn);
+  }
+}
+
+function renderAppointments() {
+  const list = document.getElementById('aptList');
+  const emptyMsg = document.getElementById('aptEmptyMsg');
+  const banner = document.getElementById('aptSelectedDateInfo');
+  const badge = document.getElementById('aptCountBadge');
+  if (!list) return;
+  list.innerHTML = '';
+
+  const allApts = state.appointments || [];
+  const tabApts = activeTab === 'all' ? allApts : allApts.filter((a) => a.patientId === activeTab);
+
+  if (badge) {
+    if (tabApts.length > 0) {
+      badge.textContent = `${tabApts.length}건`;
+      badge.classList.remove('hidden');
+    } else {
+      badge.classList.add('hidden');
+    }
+  }
+
+  // 선택 날짜 배너 표시
+  if (selectedCalDate) {
+    banner.classList.remove('hidden');
+    banner.innerHTML = `
+      <span>📅 ${selectedCalDate} 진료 일정 (${itemsCount(tabApts, selectedCalDate)}건)</span>
+      <button id="calClearDateBtn" class="btn-pill btn-small btn-outline" type="button" style="padding:2px 8px; font-size:0.75rem;">전체 보기</button>
+    `;
+    const clearBtn = document.getElementById('calClearDateBtn');
+    if (clearBtn) clearBtn.onclick = clearSelectedCalDate;
+  } else {
+    banner.classList.add('hidden');
+  }
+
+  // 날짜 필터링
+  let items = selectedCalDate ? tabApts.filter((a) => a.date === selectedCalDate) : [...tabApts];
+
+  // 날짜 오름차순 정렬 (가장 가까운 일정 순)
+  items.sort((a, b) => a.date.localeCompare(b.date));
+
+  if (items.length === 0) {
+    emptyMsg.classList.remove('hidden');
+    emptyMsg.textContent = selectedCalDate
+      ? `${selectedCalDate} 에는 등록된 병원 일정이 없어요.`
+      : (activeTab === 'all' ? '등록된 병원 진료 일정이 없어요.' : '이 가족 구성원의 병원 진료 일정이 없어요.') + " '+ 병원 일정 추가'로 일정을 등록해보세요.";
+    return;
+  }
+  emptyMsg.classList.add('hidden');
+
+  const todayStr = todayKey();
+  items.forEach((apt) => {
+    const patient = state.patients.find((p) => p.id === apt.patientId);
+    const card = document.createElement('div');
+    card.className = 'apt-card';
+
+    // D-Day 계산
+    const diffDays = Math.round((new Date(apt.date + 'T00:00:00') - new Date(todayStr + 'T00:00:00')) / (1000 * 60 * 60 * 24));
+    let dDayText = '';
+    let dDayClass = 'upcoming';
+    if (diffDays === 0) {
+      dDayText = '오늘 방문!';
+      dDayClass = 'today';
+    } else if (diffDays === 1) {
+      dDayText = '내일 방문';
+      dDayClass = 'today';
+    } else if (diffDays > 1) {
+      dDayText = `D-${diffDays}`;
+      dDayClass = 'upcoming';
+    } else {
+      dDayText = `방문 완료 (${Math.abs(diffDays)}일 전)`;
+      dDayClass = 'past';
+    }
+
+    // 의사 목록 HTML
+    const doctorsHtml = (apt.doctors || []).map((doc) => `
+      <div class="apt-doc-item">
+        <div class="apt-doc-main">
+          <span class="apt-doc-time">${doc.time || ''}</span>
+          <span class="apt-doc-name">${escapeHtml(doc.name)} 교수</span>
+          ${doc.dept ? `<span class="apt-doc-dept">· ${escapeHtml(doc.dept)}</span>` : ''}
+        </div>
+      </div>
+    `).join('');
+
+    card.innerHTML = `
+      <div class="apt-card-head">
+        <div class="apt-hospital-title">
+          <span>🏥</span>
+          <span>${escapeHtml(apt.hospitalName)}</span>
+          <span class="apt-dday-badge ${dDayClass}">${dDayText}</span>
+        </div>
+        <div class="med-item-actions">
+          <button class="btn-pill btn-small btn-outline apt-edit-btn" type="button">수정</button>
+          <button class="danger-btn apt-del-btn" type="button">🗑</button>
+        </div>
+      </div>
+      <div class="apt-meta-row">
+        ${patient ? `<span class="apt-patient-tag"><span class="dot" style="background:${patient.color}"></span>${escapeHtml(patient.name)}</span> · ` : ''}
+        <span>📅 ${apt.date} (${WEEKDAYS[new Date(apt.date + 'T00:00:00').getDay()]})</span>
+        ${apt.fastingRequired ? `<span class="apt-fasting-tag">⚠️ 금식 확인 필요</span>` : ''}
+      </div>
+
+      <div class="apt-doc-list">
+        ${doctorsHtml}
+      </div>
+
+      <div class="apt-meta-row" style="font-size:0.78rem;">
+        ${apt.notifyPrevDay !== false ? `<span>🔔 전날 ${apt.prevDayTime || '21:00'} 알림</span>` : ''}
+        ${apt.hoursBefore ? `<span>· ⏰ 진료 ${apt.hoursBefore}시간 전 알림</span>` : ''}
+      </div>
+      ${apt.note ? `<div class="apt-note-text">📝 ${escapeHtml(apt.note)}</div>` : ''}
+    `;
+
+    card.querySelector('.apt-edit-btn').onclick = () => openAptModal(apt);
+    card.querySelector('.apt-del-btn').onclick = () => removeApt(apt.id);
+    list.appendChild(card);
+  });
+}
+
+function itemsCount(arr, dateStr) {
+  return arr.filter((a) => a.date === dateStr).length;
+}
+
+function clearSelectedCalDate() {
+  selectedCalDate = null;
+  renderCalendar();
+  renderAppointments();
+}
+
+// ---------------- 병원 일정 모달 ----------------
+function openAptModal(apt) {
+  editingAptId = apt ? apt.id : null;
+  document.getElementById('aptModalTitle').textContent = apt ? '병원 진료 일정 수정' : '병원 진료 일정 등록';
+
+  // 가족 select 옵션
+  const pSelect = document.getElementById('aptPatientSelect');
+  pSelect.innerHTML = '';
+  state.patients.forEach((p) => {
+    const opt = document.createElement('option');
+    opt.value = p.id;
+    opt.textContent = p.name;
+    pSelect.appendChild(opt);
+  });
+  if (apt) {
+    pSelect.value = apt.patientId;
+  } else if (activeTab !== 'all') {
+    pSelect.value = activeTab;
+  }
+
+  document.getElementById('aptHospitalInput').value = apt ? apt.hospitalName : '';
+  document.getElementById('aptDateInput').value = apt ? apt.date : todayKey();
+  document.getElementById('aptNotifyPrevDay').checked = apt ? apt.notifyPrevDay !== false : true;
+  document.getElementById('aptPrevDayTime').value = apt && apt.prevDayTime ? apt.prevDayTime : '21:00';
+  document.getElementById('aptHoursBeforeSelect').value = apt && apt.hoursBefore ? String(apt.hoursBefore) : '3';
+  document.getElementById('aptFastingCheck').checked = apt ? !!apt.fastingRequired : true;
+  document.getElementById('aptNoteInput').value = apt ? (apt.note || '') : '';
+
+  // 교수 리스트 세팅
+  if (apt && Array.isArray(apt.doctors) && apt.doctors.length > 0) {
+    aptDoctorsDraft = apt.doctors.map((d) => ({ name: d.name, time: d.time || '10:00', dept: d.dept || '' }));
+  } else {
+    aptDoctorsDraft = [
+      { name: '', time: '10:00', dept: '' }
+    ];
+  }
+  renderAptDoctors();
+
+  document.getElementById('aptModal').classList.remove('hidden');
+}
+
+function renderAptDoctors() {
+  const wrap = document.getElementById('aptDoctorItems');
+  wrap.innerHTML = '';
+  aptDoctorsDraft.forEach((doc, idx) => {
+    const row = document.createElement('div');
+    row.className = 'bulk-item-row';
+    row.style.marginBottom = '6px';
+
+    const nameInput = document.createElement('input');
+    nameInput.className = 'field-input';
+    nameInput.placeholder = '교수명 (예: 김교수)';
+    nameInput.value = doc.name;
+    nameInput.style.flex = '2';
+    nameInput.style.marginTop = '0';
+    nameInput.oninput = (e) => { aptDoctorsDraft[idx].name = e.target.value; };
+
+    const timeInput = document.createElement('input');
+    timeInput.type = 'time';
+    timeInput.className = 'field-input time-input';
+    timeInput.value = doc.time || '10:00';
+    timeInput.style.flex = '1.5';
+    timeInput.style.marginTop = '0';
+    timeInput.oninput = (e) => { aptDoctorsDraft[idx].time = e.target.value; };
+
+    const deptInput = document.createElement('input');
+    deptInput.className = 'field-input';
+    deptInput.placeholder = '진료과/메모 (선택)';
+    deptInput.value = doc.dept || '';
+    deptInput.style.flex = '2';
+    deptInput.style.marginTop = '0';
+    deptInput.oninput = (e) => { aptDoctorsDraft[idx].dept = e.target.value; };
+
+    const removeBtn = document.createElement('button');
+    removeBtn.type = 'button';
+    removeBtn.className = 'bulk-item-remove';
+    removeBtn.textContent = '✕';
+    removeBtn.onclick = () => {
+      if (aptDoctorsDraft.length <= 1) {
+        alert('진료 일정은 최소 1명 이상 입력해야 합니다.');
+        return;
+      }
+      aptDoctorsDraft.splice(idx, 1);
+      renderAptDoctors();
+    };
+
+    row.appendChild(nameInput);
+    row.appendChild(timeInput);
+    row.appendChild(deptInput);
+    row.appendChild(removeBtn);
+    wrap.appendChild(row);
+  });
+}
+
+async function saveApt() {
+  const patientId = document.getElementById('aptPatientSelect').value;
+  const hospitalName = document.getElementById('aptHospitalInput').value.trim();
+  const date = document.getElementById('aptDateInput').value;
+  const notifyPrevDay = document.getElementById('aptNotifyPrevDay').checked;
+  const prevDayTime = document.getElementById('aptPrevDayTime').value || '21:00';
+  const hoursBefore = Number(document.getElementById('aptHoursBeforeSelect').value || 3);
+  const fastingRequired = document.getElementById('aptFastingCheck').checked;
+  const note = document.getElementById('aptNoteInput').value.trim();
+
+  const validDoctors = aptDoctorsDraft.filter((d) => d.name.trim());
+  if (!patientId || !hospitalName || !date || validDoctors.length === 0) {
+    alert('병원 이름, 날짜, 그리고 최소 1명 이상의 교수님 이름을 입력해주세요.');
+    return;
+  }
+
+  const payload = {
+    patientId,
+    hospitalName,
+    date,
+    doctors: validDoctors,
+    notifyPrevDay,
+    prevDayTime,
+    hoursBefore,
+    fastingRequired,
+    note
+  };
+
+  if (editingAptId) {
+    const updated = await api(`/api/appointments/${editingAptId}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload)
+    });
+    state.appointments = (state.appointments || []).map((a) => (a.id === editingAptId ? updated : a));
+  } else {
+    const created = await api('/api/appointments', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+    if (!state.appointments) state.appointments = [];
+    state.appointments.push(created);
+  }
+
+  closeModal('aptModal');
+  render();
+}
+
+async function removeApt(id) {
+  if (!confirm('이 병원 일정을 삭제할까요?')) return;
+  await api(`/api/appointments/${id}`, { method: 'DELETE' });
+  state.appointments = (state.appointments || []).filter((a) => a.id !== id);
+  render();
 }
 
 // ---------------- 식단(음식) ----------------
@@ -810,6 +1170,52 @@ document.getElementById('addDietBtn').onclick = (e) => {
 document.getElementById('dietSaveBtn').onclick = saveDiet;
 document.getElementById('bulkAddRowBtn').onclick = () => { bulkItemsDraft.push({ name: '', dosage: '' }); renderBulkItems(); };
 document.getElementById('bulkSaveBtn').onclick = saveBulkMed;
+
+// 병원 일정(캘린더) 이벤트 리스너
+const addAptBtn = document.getElementById('addAptBtn');
+if (addAptBtn) addAptBtn.onclick = () => openAptModal(null);
+
+const aptAddDocBtn = document.getElementById('aptAddDoctorBtn');
+if (aptAddDocBtn) {
+  aptAddDocBtn.onclick = () => {
+    aptDoctorsDraft.push({ name: '', time: '10:00', dept: '' });
+    renderAptDoctors();
+  };
+}
+
+const aptSaveBtn = document.getElementById('aptSaveBtn');
+if (aptSaveBtn) aptSaveBtn.onclick = saveApt;
+
+const calPrevBtn = document.getElementById('calPrevMonthBtn');
+if (calPrevBtn) {
+  calPrevBtn.onclick = () => {
+    calMonth--;
+    if (calMonth < 0) { calMonth = 11; calYear--; }
+    renderCalendar();
+  };
+}
+
+const calNextBtn = document.getElementById('calNextMonthBtn');
+if (calNextBtn) {
+  calNextBtn.onclick = () => {
+    calMonth++;
+    if (calMonth > 11) { calMonth = 0; calYear++; }
+    renderCalendar();
+  };
+}
+
+const calTodayBtn = document.getElementById('calTodayBtn');
+if (calTodayBtn) {
+  calTodayBtn.onclick = () => {
+    const now = new Date();
+    calYear = now.getFullYear();
+    calMonth = now.getMonth();
+    selectedCalDate = null;
+    renderCalendar();
+    renderAppointments();
+  };
+}
+
 document.querySelectorAll('[data-close-modal]').forEach((btn) => {
   btn.onclick = () => closeModal(btn.getAttribute('data-close-modal'));
 });
@@ -817,4 +1223,5 @@ document.querySelectorAll('[data-close-modal]').forEach((btn) => {
 loadData();
 initPush();
 setInterval(loadData, 30000); // 30초마다 최신 데이터로 갱신 (다른 기기에서 체크한 것도 반영)
+
 

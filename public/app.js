@@ -77,8 +77,46 @@ async function api(path, options) {
   return res.json();
 }
 
+const STORAGE_BACKUP_KEY = 'yaksok_data_backup_v1';
+
 async function loadData() {
-  state = await api('/api/data');
+  try {
+    state = await api('/api/data');
+
+    // 1) 서버에 데이터가 있으면 브라우저 localStorage에 실시간 백업 보관
+    if (state.patients && state.patients.length > 0) {
+      try {
+        localStorage.setItem(STORAGE_BACKUP_KEY, JSON.stringify(state));
+      } catch (e) {
+        console.warn('로컬 백업 저장 실패:', e);
+      }
+    } 
+    // 2) 서버가 새로 재배포되어 비어있는데, 브라우저에 저장된 백업이 있다면 즉시 자동 복원!
+    else {
+      const cached = localStorage.getItem(STORAGE_BACKUP_KEY);
+      if (cached) {
+        try {
+          const parsed = JSON.parse(cached);
+          if (parsed && Array.isArray(parsed.patients) && parsed.patients.length > 0) {
+            console.log('서버 초기화 감지: 로컬에 보관된 소중한 데이터를 서버로 자동 복원합니다...');
+            await api('/api/data/restore', {
+              method: 'POST',
+              body: JSON.stringify(parsed)
+            });
+            state = parsed;
+          }
+        } catch (e) {
+          console.warn('로컬 백업 복원 중 오류:', e);
+        }
+      }
+    }
+  } catch (e) {
+    console.error('데이터 불러오기 실패, 로컬 캐시 확인:', e);
+    const cached = localStorage.getItem(STORAGE_BACKUP_KEY);
+    if (cached) {
+      try { state = JSON.parse(cached); } catch (_) {}
+    }
+  }
   render();
 }
 
@@ -148,9 +186,25 @@ function scheduleToday() {
 function renderToday() {
   const list = document.getElementById('todayList');
   const emptyMsg = document.getElementById('todayEmptyMsg');
+  const badge = document.getElementById('todayProgressBadge');
   const all = scheduleToday();
   const items = activeTab === 'all' ? all : all.filter((i) => i.patientId === activeTab);
   list.innerHTML = '';
+
+  const totalCount = items.length;
+  const takenCount = items.filter((i) => i.taken).length;
+  if (badge) {
+    if (totalCount > 0) {
+      badge.textContent = `${takenCount}/${totalCount} 완료`;
+      badge.classList.remove('hidden');
+    } else {
+      badge.classList.add('hidden');
+    }
+  }
+
+  // 엄마아빠를 위한 원클릭 시점별(식전/식후) 일괄 복약 버튼 바 렌더링
+  renderQuickBatchBar(items);
+
   if (items.length === 0) {
     emptyMsg.textContent = (activeTab === 'all' ? '오늘 예정된 약이 없어요.' : '이 가족 구성원은 오늘 예정된 약이 없어요.') + ' 아래에서 약을 등록해보세요.';
     emptyMsg.classList.remove('hidden');
@@ -158,6 +212,79 @@ function renderToday() {
   }
   emptyMsg.classList.add('hidden');
   items.forEach((item) => list.appendChild(renderTodayItem(item)));
+}
+
+// ---------------- 원클릭 시점별(식전/식후) 일괄 복약 바 ----------------
+function renderQuickBatchBar(items) {
+  const wrap = document.getElementById('quickTimingBatchWrap');
+  const bar = document.getElementById('quickTimingBatchBar');
+  if (!wrap || !bar) return;
+  if (!items || items.length === 0) {
+    wrap.classList.add('hidden');
+    return;
+  }
+  wrap.classList.remove('hidden');
+  bar.innerHTML = '';
+
+  // 시점별로 그룹핑
+  const groups = {};
+  TIMING_SLOTS.forEach((ts) => { groups[ts.slot] = []; });
+  items.forEach((item) => {
+    const timing = inferTiming(item.time, item.slot);
+    const slotName = timing.slot;
+    if (!groups[slotName]) groups[slotName] = [];
+    groups[slotName].push(item);
+  });
+
+  // 약이 있는 시점만 버튼 생성
+  TIMING_SLOTS.forEach((ts) => {
+    const slotItems = groups[ts.slot];
+    if (!slotItems || slotItems.length === 0) return;
+
+    const total = slotItems.length;
+    const taken = slotItems.filter((i) => i.taken).length;
+    const isAllDone = total > 0 && taken === total;
+
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = `quick-batch-btn ${ts.type}` + (isAllDone ? ' all-done' : '');
+
+    if (isAllDone) {
+      btn.innerHTML = `<span>✓</span> <span>${ts.slot} 완료</span> <span class="badge-count">${taken}/${total}</span>`;
+      btn.title = '클릭하면 완료 상태를 취소합니다';
+    } else {
+      btn.innerHTML = `<span>👉</span> <span>${ts.slot} 복약 완료</span> <span class="badge-count">${taken}/${total}</span>`;
+      btn.title = `클릭하면 ${ts.slot} 약 ${total}개를 한 번에 완료 체크합니다`;
+    }
+
+    btn.onclick = () => toggleBatchSlot(ts.slot, slotItems, isAllDone);
+    bar.appendChild(btn);
+  });
+}
+
+async function toggleBatchSlot(slotName, slotItems, isAllDone) {
+  const targetTaken = !isAllDone;
+  const date = todayKey();
+  const batchItems = slotItems.map((i) => ({ medId: i.medId, time: i.time }));
+
+  // 낙관적 UI 업데이트: 로컬 state.logs 즉시 반영
+  batchItems.forEach((b) => {
+    const key = `${date}|${b.medId}|${b.time}`;
+    if (targetTaken) state.logs[key] = true;
+    else delete state.logs[key];
+  });
+  render();
+
+  try {
+    await api('/api/logs/batch', {
+      method: 'POST',
+      body: JSON.stringify({ date, items: batchItems, taken: targetTaken })
+    });
+  } catch (e) {
+    console.error('일괄 체크 실패:', e);
+    alert('일괄 체크 중 통신 오류가 발생했습니다.');
+    loadData();
+  }
 }
 
 function renderTodayItem(item) {
@@ -1483,6 +1610,60 @@ if (calTodayBtn) {
   };
 }
 
+// ---- 데이터 백업 & 수동 복원 ----
+function downloadBackupJson() {
+  const backupStr = JSON.stringify(state, null, 2);
+  const blob = new Blob([backupStr], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `약속_가족복약_안전백업_${todayKey()}.json`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+async function restoreBackupFromFile(e) {
+  const file = e.target.files && e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = async (ev) => {
+    try {
+      const parsed = JSON.parse(ev.target.result);
+      if (!parsed || !Array.isArray(parsed.patients)) {
+        alert('올바른 약속 백업 파일(.json)이 아닙니다.');
+        return;
+      }
+      if (!confirm(`백업 파일에서 데이터(${parsed.patients.length}명 가족, ${parsed.medications ? parsed.medications.length : 0}개 복약, ${parsed.appointments ? parsed.appointments.length : 0}개 진료)를 복원할까요?`)) {
+        return;
+      }
+      await api('/api/data/restore', {
+        method: 'POST',
+        body: JSON.stringify(parsed)
+      });
+      state = parsed;
+      try { localStorage.setItem(STORAGE_BACKUP_KEY, JSON.stringify(parsed)); } catch (_) {}
+      alert('데이터가 성공적으로 복원되었습니다! 🎉');
+      render();
+    } catch (err) {
+      alert('백업 파일을 읽는 중 오류가 발생했습니다: ' + err.message);
+    }
+  };
+  reader.readAsText(file);
+}
+
+const backupDlBtn = document.getElementById('backupDownloadBtn');
+if (backupDlBtn) backupDlBtn.onclick = downloadBackupJson;
+
+const backupRestoreBtn = document.getElementById('backupRestorePickBtn');
+const backupFileInput = document.getElementById('backupFileInput');
+if (backupRestoreBtn && backupFileInput) {
+  backupRestoreBtn.onclick = () => backupFileInput.click();
+  backupFileInput.onchange = restoreBackupFromFile;
+}
+
 loadData();
 initPush();
 setInterval(loadData, 30000); // 30초마다 최신 데이터로 갱신 (다른 기기에서 체크한 것도 반영)
+

@@ -39,22 +39,6 @@
 
     <div id="mainContent" class="hidden">
       <section class="section" style="margin-top:0">
-        <h2 class="section-title">엑셀로 한 번에 등록</h2>
-        <p id="excelSelectMsg" class="muted-text hidden">먼저 위에서 가족 구성원을 선택하세요.</p>
-        <div id="excelBox" class="hidden">
-          <p class="muted-text" style="margin-top:0">약 종류가 많으면 하나씩 입력하는 것보다 엑셀로 한 번에 올리는 게 편해요.</p>
-          <div class="excel-actions">
-            <a href="/template.xlsx" download class="btn-pill btn-outline">📄 템플릿 다운로드</a>
-            <input id="excelFileInput" type="file" accept=".xlsx,.xls" class="hidden" />
-            <button id="excelPickBtn" class="btn-pill btn-outline">파일 선택</button>
-            <span id="excelFileName" class="muted-text" style="margin:0"></span>
-          </div>
-          <button id="excelUploadBtn" class="btn-pill btn-primary btn-block mt" disabled>업로드해서 미리보기</button>
-          <div id="excelPreview" class="hidden mt"></div>
-        </div>
-      </section>
-
-      <section class="section">
         <h2 class="section-title">이 음식 먹어도 될까?</h2>
         <p id="dietSelectMsg" class="muted-text hidden">먼저 위에서 가족 구성원을 선택하세요.</p>
         <div id="dietAskBox" class="hidden">
@@ -77,44 +61,33 @@
         <div id="weekList" class="week-list"></div>
       </section>
 
-      <section class="section">
-        <div class="section-header-row">
-          <h2 class="section-title">식단 목록 관리</h2>
+      <section class="section collapsible-section">
+        <div class="section-header-row collapsible-header" id="dietHeaderToggle" role="button" tabindex="0" title="클릭하여 목록 접기/펼치기">
+          <div class="section-title-wrap">
+            <h2 class="section-title">식단 목록 관리</h2>
+            <span id="dietCountBadge" class="count-badge hidden">0</span>
+            <span id="dietCollapseArrow" class="collapse-arrow">▶</span>
+          </div>
           <button id="addDietBtn" class="btn-pill btn-primary hidden">+ 음식 추가</button>
         </div>
-        <p id="dietListSelectMsg" class="muted-text hidden">식단 목록을 등록하려면 위에서 가족 구성원을 선택하세요.</p>
-        <div id="dietList" class="meds-list"></div>
+        <div id="dietCollapseBody" class="collapsible-body collapsed">
+          <p id="dietListSelectMsg" class="muted-text hidden">식단 목록을 등록하려면 위에서 가족 구성원을 선택하세요.</p>
+          <div id="dietList" class="meds-list"></div>
+        </div>
       </section>
 
-      <section class="section">
-        <div class="section-header-row">
-          <h2 class="section-title">복약 관리</h2>
+      <section class="section collapsible-section">
+        <div class="section-header-row collapsible-header" id="medsHeaderToggle" role="button" tabindex="0" title="클릭하여 목록 접기/펼치기">
+          <div class="section-title-wrap">
+            <h2 class="section-title">복약 관리</h2>
+            <span id="medsCountBadge" class="count-badge hidden">0</span>
+            <span id="medsCollapseArrow" class="collapse-arrow">▶</span>
+          </div>
           <button id="addMedBtn" class="btn-pill btn-primary hidden">+ 약 추가</button>
         </div>
-        <p id="medsSelectMsg" class="muted-text hidden">약을 등록하거나 수정하려면 위에서 가족 구성원을 선택하세요.</p>
-        <div id="medsList" class="meds-list"></div>
-      </section>
-
-      <section class="section">
-        <div class="section-header-row">
-          <h2 class="section-title">운동 알림 (권고)</h2>
-          <button id="addExerciseBtn" class="btn-pill btn-primary hidden">+ 운동 추가</button>
-        </div>
-        <p id="exerciseSelectMsg" class="muted-text hidden">운동 알림을 등록하려면 위에서 가족 구성원을 선택하세요.</p>
-        <p id="exerciseHint" class="muted-text hidden" style="margin-top:0">운동은 놓쳐도 반복 알림을 보내지 않아요. 정해진 시간에 한 번만 알려드려요.</p>
-        <div id="exerciseList" class="meds-list"></div>
-      </section>
-
-      <section class="section">
-        <h2 class="section-title">재알림 설정</h2>
-        <p id="reminderSelectMsg" class="muted-text hidden">재알림 간격을 설정하려면 위에서 가족 구성원을 선택하세요.</p>
-        <div id="reminderBox" class="hidden">
-          <p class="muted-text" style="margin-top:0">약 먹을 시간이 지나도 체크 안 하면, 아래 간격으로 최대 3번까지 다시 알려드려요.</p>
-          <div class="time-add-row">
-            <input id="reminderIntervalInput" type="number" min="1" max="180" class="field-input" style="max-width:120px" />
-            <span class="muted-text" style="margin:0">분마다</span>
-            <button id="reminderSaveBtn" class="btn-pill btn-primary">저장</button>
-          </div>
+        <div id="medsCollapseBody" class="collapsible-body collapsed">
+          <p id="medsSelectMsg" class="muted-text hidden">약을 등록하거나 수정하려면 위에서 가족 구성원을 선택하세요.</p>
+          <div id="medsList" class="meds-list"></div>
         </div>
       </section>
 
@@ -144,6 +117,9 @@
       </div>
       <p class="muted-text" style="margin-top:0">한 시간에 여러 약을 같이 드신다면, 한 번에 다 등록해두세요. 체크는 나중에 각각 따로 할 수 있어요.</p>
 
+      <label class="field-label mt">복용 시점 (빠른 선택)</label>
+      <div id="bulkTimingPresets" class="timing-presets-row"></div>
+
       <label class="field-label mt">복용 시간</label>
       <input id="bulkTimeInput" type="time" class="field-input time-input" value="08:00" />
 
@@ -171,6 +147,9 @@
       <label class="field-label mt">복용량 / 메모 (선택)</label>
       <input id="medDosageInput" class="field-input" placeholder="예: 1정, 식후 30분" />
 
+      <label class="field-label mt">복용 시점 (빠른 선택)</label>
+      <div id="medTimingPresets" class="timing-presets-row"></div>
+
       <label class="field-label mt">복용 시간</label>
       <div class="time-add-row">
         <input id="medTimeInput" type="time" class="field-input time-input" value="08:00" />
@@ -182,30 +161,6 @@
       <div id="medDaysRow" class="days-row"></div>
 
       <button id="medSaveBtn" class="btn-pill btn-primary btn-block mt">저장하기</button>
-    </div>
-  </div>
-
-  <!-- 운동 추가/수정 모달 -->
-  <div id="exerciseModal" class="modal-overlay hidden">
-    <div class="modal-shell">
-      <div class="modal-head">
-        <h3 id="exerciseModalTitle">운동 추가</h3>
-        <button class="icon-btn" data-close-modal="exerciseModal">✕</button>
-      </div>
-      <label class="field-label">운동 이름</label>
-      <input id="exerciseNameInput" class="field-input" placeholder="예: 저녁 산책 30분" />
-
-      <label class="field-label mt">시간</label>
-      <div class="time-add-row">
-        <input id="exerciseTimeInput" type="time" class="field-input time-input" value="18:00" />
-        <button id="exerciseTimeAddBtn" class="btn-pill btn-primary">추가</button>
-      </div>
-      <div id="exerciseTimesChips" class="chips-row"></div>
-
-      <label class="field-label mt">요일</label>
-      <div id="exerciseDaysRow" class="days-row"></div>
-
-      <button id="exerciseSaveBtn" class="btn-pill btn-primary btn-block mt">저장하기</button>
     </div>
   </div>
 

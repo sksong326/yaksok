@@ -67,7 +67,19 @@
       </section>
 
       <section class="section">
-        <h2 class="section-title">오늘의 약속</h2>
+        <div class="section-header-row">
+          <div class="section-title-wrap">
+            <h2 class="section-title">오늘의 약속</h2>
+            <span id="todayProgressBadge" class="count-badge hidden">0/0 완료</span>
+          </div>
+        </div>
+
+        <!-- 엄마아빠를 위한 원클릭 시점별(식전/식후) 일괄 복약 버튼 바 -->
+        <div id="quickTimingBatchWrap" class="quick-batch-wrap hidden">
+          <p class="quick-batch-label">⚡ 식전 / 식후 원클릭 일괄 복약 완료</p>
+          <div id="quickTimingBatchBar" class="quick-batch-bar"></div>
+        </div>
+
         <ul id="todayList" class="today-list"></ul>
         <p id="todayEmptyMsg" class="muted-text hidden"></p>
       </section>
@@ -161,6 +173,20 @@
             <input id="reminderIntervalInput" type="number" min="1" max="180" class="field-input" style="max-width:120px" />
             <span class="muted-text" style="margin:0">분마다</span>
             <button id="reminderSaveBtn" class="btn-pill btn-primary">저장</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2 class="section-title">데이터 안전 보관 & 백업</h2>
+        <div class="alarm-setting-box" style="margin-top:8px;">
+          <p class="muted-text" style="margin:0 0 8px; font-size:0.85rem;">
+            💚 <strong>자동 안전 보관:</strong> 작성하신 가족, 복약, 식단, 병원 일정은 서버와 이 기기(브라우저)에 항상 자동 백업되어 재배포나 새로고침 시에도 안전하게 보호됩니다.
+          </p>
+          <div class="excel-actions" style="margin-top:10px;">
+            <button id="backupDownloadBtn" type="button" class="btn-pill btn-outline">💾 백업 파일 다운로드</button>
+            <button id="backupRestorePickBtn" type="button" class="btn-pill btn-outline">📂 백업 파일 불러오기</button>
+            <input id="backupFileInput" type="file" accept=".json" class="hidden" />
           </div>
         </div>
       </section>

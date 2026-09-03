@@ -657,7 +657,9 @@ cron.schedule('* * * * *', async () => {
     }
   }
 
-  // 1. ---- 복약: 최대 3번까지 재알림 ----
+  // 1. ---- 복약: 같은 시간대 약 묶음 발송 및 최대 3번까지 재알림 ----
+  const dueMedsByPatientAndTime = {};
+
   data.medications.forEach((med) => {
     if (!med.days.includes(weekday)) return;
     const patient = data.patients.find((p) => p.id === med.patientId);
@@ -677,17 +679,51 @@ cron.schedule('* * * * *', async () => {
       }
       const isFirst = !state;
       const count = (state ? state.count : 0) + 1;
-      lastNotifiedAt.set(notifyKey, { lastMin: nowMin, count });
 
-      const slot = (med.timeSlots && med.timeSlots[time]) || inferTimingSlot(time);
-      const slotPrefix = slot ? `[${slot}] ` : '';
-      const notiTitle = isFirst ? `${slotPrefix}약속 시간이에요` : `${slotPrefix}아직 안 드셨어요~ 드셨으면 체크 부탁드려요!`;
-      sendToAll({
-        title: notiTitle,
-        body: `${patient ? patient.name : ''} · ${med.name}${med.dosage ? ' · ' + med.dosage : ''} (${time})`,
-        url: `/?target=med_${med.id}_${time}`,
-        target: `med_${med.id}_${time}`
-      });
+      const groupKey = `${med.patientId}_${time}`;
+      if (!dueMedsByPatientAndTime[groupKey]) {
+        dueMedsByPatientAndTime[groupKey] = {
+          patient,
+          time,
+          isFirst,
+          items: []
+        };
+      }
+      dueMedsByPatientAndTime[groupKey].items.push({ med, notifyKey, count });
+    });
+  });
+
+  Object.values(dueMedsByPatientAndTime).forEach((group) => {
+    if (!group.items || group.items.length === 0) return;
+    const { patient, time, isFirst, items } = group;
+
+    items.forEach(({ notifyKey, count }) => {
+      lastNotifiedAt.set(notifyKey, { lastMin: nowMin, count });
+    });
+
+    const firstMed = items[0].med;
+    const slot = (firstMed.timeSlots && firstMed.timeSlots[time]) || inferTimingSlot(time);
+    const slotPrefix = slot ? `[${slot}] ` : '';
+    const patientName = patient ? patient.name : '가족';
+
+    let notiTitle = '';
+    let notiBody = '';
+    if (items.length === 1) {
+      notiTitle = isFirst ? `${slotPrefix}약속 시간이에요 💊` : `${slotPrefix}아직 안 드셨어요~ 잊지 마시고 챙겨드세요!`;
+      notiBody = `${patientName} · ${firstMed.name}${firstMed.dosage ? ' · ' + firstMed.dosage : ''} (${time})`;
+    } else {
+      notiTitle = isFirst ? `${slotPrefix}${patientName}님 약 챙겨드실 시간이에요 💊` : `${slotPrefix}${patientName}님, 아직 안 드신 약이 있어요!`;
+      const namesSummary = items.slice(0, 2).map((it) => it.med.name).join(', ');
+      const extraCount = items.length - 2;
+      const extraText = extraCount > 0 ? ` 외 ${extraCount}개` : '';
+      notiBody = `${namesSummary}${extraText} (총 ${items.length}개 약) (${time})`;
+    }
+
+    sendToAll({
+      title: notiTitle,
+      body: notiBody,
+      url: `/?target=time_${time}_${patient ? patient.id : ''}`,
+      target: `time_${time}_${patient ? patient.id : ''}`
     });
   });
 

@@ -115,7 +115,9 @@ body {
 .section-header-row { display: flex; align-items: center; justify-content: space-between; }
 .muted-text { font-size: 0.9rem; color: var(--ink-soft); margin-top: 10px; }
 
-.btn-pill { border-radius: 9999px; padding: 10px 16px; font-size: 0.9rem; font-weight: 500; border: none; cursor: pointer; }
+.btn-pill { border-radius: 9999px; padding: 10px 16px; font-size: 0.9rem; font-weight: 500; border: none; cursor: pointer; white-space: nowrap; word-break: keep-all; flex-shrink: 0; }
+#dietAskInput { margin-top: 0 !important; flex: 1 !important; min-width: 0 !important; }
+#dietAskBtn { white-space: nowrap !important; flex-shrink: 0 !important; word-break: keep-all !important; padding: 10px 18px !important; margin-top: 0 !important; }
 .btn-primary { background: var(--primary); color: #fff; }
 .btn-outline { background: var(--surface); color: var(--ink); border: 1px solid var(--line); }
 .btn-block { width: 100%; }
@@ -608,8 +610,12 @@ body {
   user-select: none;
   transition: transform 0.15s ease, box-shadow 0.15s ease;
 }
+.apt-col-badge:hover {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+  transform: translateY(-1px);
+}
 .apt-col-badge:active {
-  transform: scale(0.94);
+  transform: scale(0.92);
 }
 .apt-col-badge.clinic {
   background: #EFF6FF;

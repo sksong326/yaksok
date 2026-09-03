@@ -353,6 +353,7 @@ function renderTodayItem(item) {
   li.className = 'today-item';
   li.id = `today-item-${item.medId}-${(item.time || '').replace(':', '')}`;
   li.setAttribute('data-med-id', item.medId);
+  li.setAttribute('data-time', item.time || '');
   li.setAttribute('data-target-id', `med_${item.medId}_${item.time}`);
 
   const pocket = document.createElement('button');
@@ -662,8 +663,8 @@ function renderAppointments() {
 
       return `
         <div class="apt-doc-row" data-doc-idx="${docIdx}">
-          <!-- 좌측: 청진기/현미경 밑에 진료/검사 두 글자 표기 -->
-          <div class="apt-col-badge ${typeClass}" title="${displayName} 개별 알림 발송">
+          <!-- 좌측: 청진기/현미경 밑에 진료/검사 두 글자 표기 (터치 시 알림 발송) -->
+          <div class="apt-col-badge ${typeClass}" title="터치하여 ${displayName} 알림 보내기">
             <span class="badge-icon">${icon}</span>
             <span class="badge-label">${label}</span>
           </div>
@@ -677,14 +678,6 @@ function renderAppointments() {
             <div class="apt-line-bottom">
               ${deptText ? `<span class="apt-dept-text">📍 ${deptText}</span>` : '<span class="apt-dept-text" style="color:var(--ink-soft);opacity:0.6;">(장소 미기재)</span>'}
             </div>
-          </div>
-
-          <!-- 우측: 개별 알림 버튼 -->
-          <div class="apt-col-action">
-            <button type="button" class="apt-single-notif-btn" data-doc-idx="${docIdx}" title="${displayName} 개별 알림 발송">
-              <span class="btn-icon">📢</span>
-              <span class="btn-label">알림</span>
-            </button>
           </div>
         </div>
       `;
@@ -725,16 +718,7 @@ function renderAppointments() {
     const notifBtn = card.querySelector('.apt-notif-btn');
     if (notifBtn) notifBtn.onclick = () => sendAptNotificationNow(apt);
 
-    // 각 진료/검사별 개별 알림 버튼 및 배지 클릭 이벤트 연동
-    card.querySelectorAll('.apt-single-notif-btn').forEach((btn) => {
-      btn.onclick = (e) => {
-        e.stopPropagation();
-        const docIdx = Number(btn.getAttribute('data-doc-idx'));
-        const doc = (apt.doctors || [])[docIdx];
-        if (doc) sendSingleDoctorNotif(apt, doc);
-      };
-    });
-
+    // 각 진료/검사별 배지 클릭 시 개별 알림 발송
     card.querySelectorAll('.apt-col-badge').forEach((badge) => {
       badge.onclick = (e) => {
         e.stopPropagation();
@@ -2110,48 +2094,77 @@ function executeScrollToTarget(target) {
     }
   }
 
-  // 2) med_ 로 시작하는 복약 타겟
-  if (target.startsWith('med_')) {
-    const rest = target.replace('med_', '');
-    const parts = rest.split('_');
-    const medId = parts[0];
-    const time = parts[1];
+  // 2) med_ 또는 time_ 으로 시작하는 복약 타겟 (같은 시간에 먹는 모든 약 동시 스크롤 및 하이라이트)
+  if (target.startsWith('med_') || target.startsWith('time_')) {
+    let medId = null;
+    let time = null;
+    let patientId = null;
 
-    let el = null;
+    if (target.startsWith('med_')) {
+      const rest = target.replace('med_', '');
+      const parts = rest.split('_');
+      medId = parts[0];
+      time = parts[1];
+    } else if (target.startsWith('time_')) {
+      const rest = target.replace('time_', '');
+      const parts = rest.split('_');
+      time = parts[0];
+      if (parts[1]) patientId = parts[1];
+    }
+
+    // 환자 탭 전환이 필요한 경우 (특정 환자의 약인데 다른 탭에 있을 때)
+    if (medId && !patientId) {
+      const m = (state.medications || []).find((x) => x.id === medId);
+      if (m) patientId = m.patientId;
+    }
+    if (patientId && activeTab !== 'all' && activeTab !== patientId) {
+      activeTab = patientId;
+      renderTabs();
+      renderToday();
+    }
+
+    // 1) 오늘의 복약 목록에서 같은 시간에 먹는 모든 약 항목 찾기
+    let matchingItems = [];
     if (time) {
-      el = document.getElementById(`today-item-${medId}-${time.replace(':', '')}`);
+      matchingItems = Array.from(document.querySelectorAll(`.today-item[data-time="${time}"]`));
     }
-    if (!el) {
-      el = document.querySelector(`[data-med-id="${medId}"]`);
+    if (matchingItems.length === 0 && medId) {
+      const singleEl = document.getElementById(`today-item-${medId}-${(time || '').replace(':', '')}`) ||
+                       document.querySelector(`[data-med-id="${medId}"]`);
+      if (singleEl) matchingItems = [singleEl];
     }
 
-    if (el) {
-      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      applyHighlight(el);
+    if (matchingItems.length > 0) {
+      // 같은 시간대의 첫 번째 약으로 화면 중앙에 부드럽게 스크롤
+      matchingItems[0].scrollIntoView({ behavior: 'smooth', block: 'center' });
+      // 같은 시간에 먹는 모든 약에 펄스 하이라이트 효과 동시 적용!
+      matchingItems.forEach((el) => applyHighlight(el));
       pendingTarget = null;
       return true;
     }
 
-    // 오늘의 복약 목록에 없으면 복약 관리 섹션 열기
-    const med = (state.medications || []).find((m) => m.id === medId);
-    if (med) {
-      if (activeTab !== med.patientId) {
-        activeTab = med.patientId;
-        renderTabs();
-        render();
-      }
-      if (isMedsCollapsed) {
-        toggleMedsCollapse();
-      }
-      setTimeout(() => {
-        const medEl = document.getElementById(`med-item-${medId}`) || document.querySelector(`[data-med-id="${medId}"]`);
-        if (medEl) {
-          medEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
-          applyHighlight(medEl);
+    // 2) 오늘의 복약 목록에 없으면 전체 복약 관리 섹션 열기
+    if (medId) {
+      const med = (state.medications || []).find((m) => m.id === medId);
+      if (med) {
+        if (activeTab !== med.patientId) {
+          activeTab = med.patientId;
+          renderTabs();
+          render();
         }
-      }, 250);
-      pendingTarget = null;
-      return true;
+        if (isMedsCollapsed) {
+          toggleMedsCollapse();
+        }
+        setTimeout(() => {
+          const medEl = document.getElementById(`med-item-${medId}`) || document.querySelector(`[data-med-id="${medId}"]`);
+          if (medEl) {
+            medEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            applyHighlight(medEl);
+          }
+        }, 250);
+        pendingTarget = null;
+        return true;
+      }
     }
   }
 

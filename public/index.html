@@ -61,6 +61,41 @@
         <div id="weekList" class="week-list"></div>
       </section>
 
+      <!-- 병원 방문 일정 (캘린더) -->
+      <section class="section">
+        <div class="section-header-row">
+          <div class="section-title-wrap">
+            <h2 class="section-title">🏥 병원 일정 (캘린더)</h2>
+            <span id="aptCountBadge" class="count-badge hidden">0</span>
+          </div>
+          <button id="addAptBtn" class="btn-pill btn-primary">+ 병원 일정 추가</button>
+        </div>
+
+        <div class="calendar-card">
+          <div class="calendar-header">
+            <button id="calPrevMonthBtn" class="cal-nav-btn" type="button" title="이전 달">◀</button>
+            <span id="calCurrentMonthLabel" class="cal-month-title">2026년 9월</span>
+            <button id="calNextMonthBtn" class="cal-nav-btn" type="button" title="다음 달">▶</button>
+            <button id="calTodayBtn" class="btn-pill btn-small btn-outline" type="button" style="margin-left:auto">오늘</button>
+          </div>
+          <div class="calendar-weekdays">
+            <span class="cal-wd sun">일</span>
+            <span class="cal-wd">월</span>
+            <span class="cal-wd">화</span>
+            <span class="cal-wd">수</span>
+            <span class="cal-wd">목</span>
+            <span class="cal-wd">금</span>
+            <span class="cal-wd sat">토</span>
+          </div>
+          <div id="calendarGrid" class="calendar-grid"></div>
+        </div>
+
+        <!-- 선택 날짜 안내 및 병원 일정 카드 목록 -->
+        <div id="aptSelectedDateInfo" class="apt-selected-banner hidden"></div>
+        <div id="aptList" class="apt-list"></div>
+        <p id="aptEmptyMsg" class="muted-text">등록된 병원 일정이 없어요. '+ 병원 일정 추가'로 아빠 병원 일정을 등록해보세요.</p>
+      </section>
+
       <section class="section collapsible-section">
         <div class="section-header-row collapsible-header" id="dietHeaderToggle" role="button" tabindex="0" title="클릭하여 목록 접기/펼치기">
           <div class="section-title-wrap">
@@ -181,6 +216,68 @@
       <input id="dietNoteInput" class="field-input" placeholder="예: 하루 1개까지 괜찮음, 약사님이 절대 금지라고 함" />
 
       <button id="dietSaveBtn" class="btn-pill btn-primary btn-block mt">저장하기</button>
+    </div>
+  </div>
+
+  <!-- 병원 진료 일정 추가/수정 모달 -->
+  <div id="aptModal" class="modal-overlay hidden">
+    <div class="modal-shell" style="max-width: 440px;">
+      <div class="modal-head">
+        <h3 id="aptModalTitle">병원 진료 일정 등록</h3>
+        <button class="icon-btn" data-close-modal="aptModal">✕</button>
+      </div>
+
+      <label class="field-label">가족 구성원</label>
+      <select id="aptPatientSelect" class="field-input"></select>
+
+      <label class="field-label mt">병원 이름</label>
+      <input id="aptHospitalInput" class="field-input" placeholder="예: 서울대학교병원, 아산병원" />
+
+      <label class="field-label mt">방문 날짜</label>
+      <input id="aptDateInput" type="date" class="field-input" />
+
+      <label class="field-label mt">교수(의사) 진료 일정</label>
+      <p class="muted-text" style="margin:2px 0 6px; font-size:0.8rem">한 날에 여러 교수님을 만난다면 각각 시간과 함께 추가하세요.</p>
+      <div id="aptDoctorItems" class="bulk-items-list"></div>
+      <button id="aptAddDoctorBtn" type="button" class="btn-pill btn-outline btn-block mt-sm">+ 교수(진료) 추가</button>
+
+      <label class="field-label mt">알림 시간 설정</label>
+      <div class="alarm-setting-box">
+        <div class="alarm-setting-row">
+          <label class="checkbox-label">
+            <input type="checkbox" id="aptNotifyPrevDay" checked />
+            <span>방문 전날 일괄 알림</span>
+          </label>
+          <input type="time" id="aptPrevDayTime" class="field-input time-input" value="21:00" style="width: 100px; margin-top:0" />
+        </div>
+        <p class="hint-text" style="margin:2px 0 10px 24px">방문 전날 밤 9시에 전체 진료 일정 일괄 알림이 옵니다.</p>
+
+        <div class="alarm-setting-row">
+          <label class="checkbox-label">
+            <input type="checkbox" id="aptNotifyBefore" checked />
+            <span>진료 전 개별 알림</span>
+          </label>
+          <select id="aptHoursBeforeSelect" class="field-input" style="width: 100px; margin-top:0">
+            <option value="1">1시간 전</option>
+            <option value="2">2시간 전</option>
+            <option value="3" selected>3시간 전</option>
+            <option value="4">4시간 전</option>
+          </select>
+        </div>
+        <p class="hint-text" style="margin:2px 0 10px 24px">각 교수님 진료 시간 3시간 전에 각각 알림이 옵니다.</p>
+
+        <div class="alarm-setting-row" style="margin-top: 10px; border-top: 1px dashed var(--line); padding-top: 8px;">
+          <label class="checkbox-label" style="color: var(--danger); font-weight: 600;">
+            <input type="checkbox" id="aptFastingCheck" checked />
+            <span>⚠️ "금식하셔야 되나요? 확인해주세요" 문구 알림에 포함</span>
+          </label>
+        </div>
+      </div>
+
+      <label class="field-label mt">메모 (선택)</label>
+      <input id="aptNoteInput" class="field-input" placeholder="예: 신분증 지참, 전날 밤 10시부터 물 금지" />
+
+      <button id="aptSaveBtn" class="btn-pill btn-primary btn-block mt">저장하기</button>
     </div>
   </div>
 

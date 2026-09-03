@@ -546,37 +546,70 @@ body {
   font-size: 0.83rem;
   font-weight: 700;
   color: var(--ink);
-  margin: 0 0 8px 2px;
+  margin: 0 0 10px 2px;
   display: flex;
   align-items: center;
   gap: 6px;
 }
 .quick-batch-bar {
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
   gap: 8px;
 }
+.quick-batch-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+.quick-batch-meal-badge {
+  width: 44px;
+  min-width: 44px;
+  height: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  font-size: 0.9rem;
+  color: var(--ink);
+  background: #ffffff;
+  border-radius: 10px;
+  border: 1.5px solid var(--line);
+  flex-shrink: 0;
+  user-select: none;
+}
+.quick-batch-btn-group {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  flex: 1;
+}
+.quick-batch-btn-group.single {
+  grid-template-columns: 1fr;
+}
 .quick-batch-btn {
-  min-height: 42px;
-  border-radius: 12px;
-  padding: 8px 14px;
-  font-size: 0.88rem;
+  height: 38px;
+  min-height: 38px;
+  border-radius: 10px;
+  padding: 0 8px;
+  font-size: 0.84rem;
   font-weight: 700;
   cursor: pointer;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: 4px;
   transition: all 0.15s ease;
   border: 1.5px solid transparent;
   user-select: none;
   touch-action: manipulation;
+  white-space: nowrap;
 }
-.quick-batch-btn:hover {
+.quick-batch-btn:hover:not(:disabled) {
   transform: translateY(-1px);
   filter: brightness(0.97);
 }
-.quick-batch-btn:active {
+.quick-batch-btn:active:not(:disabled) {
   transform: translateY(1px);
 }
 /* 식전: 빨강 계열 */
@@ -585,7 +618,7 @@ body {
   color: #DC2626;
   border-color: #FECACA;
 }
-.quick-batch-btn.pre:hover {
+.quick-batch-btn.pre:hover:not(:disabled) {
   background: #FECACA;
 }
 /* 식후: 파랑 계열 */
@@ -594,7 +627,7 @@ body {
   color: #2563EB;
   border-color: #BFDBFE;
 }
-.quick-batch-btn.post:hover {
+.quick-batch-btn.post:hover:not(:disabled) {
   background: #BFDBFE;
 }
 /* 취침전: 초록 계열 */
@@ -603,7 +636,7 @@ body {
   color: #16A34A;
   border-color: #BBF7D0;
 }
-.quick-batch-btn.bed:hover {
+.quick-batch-btn.bed:hover:not(:disabled) {
   background: #BBF7D0;
 }
 
@@ -617,13 +650,42 @@ body {
 .quick-batch-btn.all-done:hover {
   background: #DCFCE7 !important;
 }
+
+/* 약이 없는 시점 (비활성화 상태) */
+.quick-batch-btn.empty {
+  background: #F3F4F6 !important;
+  color: #9CA3AF !important;
+  border-color: #E5E7EB !important;
+  cursor: default !important;
+  opacity: 0.72;
+  box-shadow: none !important;
+}
+
 .quick-batch-btn .badge-count {
-  font-size: 0.78rem;
-  padding: 2px 6px;
+  font-size: 0.74rem;
+  padding: 1px 5px;
   border-radius: 9999px;
   background: rgba(0,0,0,0.07);
+  font-family: 'IBM Plex Mono', monospace;
 }
 .quick-batch-btn.all-done .badge-count {
   background: rgba(21,128,61,0.15);
+}
+
+@media (max-width: 380px) {
+  .quick-batch-meal-badge {
+    width: 38px;
+    min-width: 38px;
+    font-size: 0.82rem;
+  }
+  .quick-batch-btn {
+    font-size: 0.78rem;
+    padding: 0 4px;
+    gap: 2px;
+  }
+  .quick-batch-btn .badge-count {
+    font-size: 0.7rem;
+    padding: 1px 4px;
+  }
 }
 

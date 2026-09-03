@@ -214,7 +214,7 @@ function renderToday() {
   items.forEach((item) => list.appendChild(renderTodayItem(item)));
 }
 
-// ---------------- 원클릭 시점별(식전/식후) 일괄 복약 바 ----------------
+// ---------------- 원클릭 시점별(식전/식후) 일괄 복약 바 (아침/점심/저녁 3칸 모바일 최적화) ----------------
 function renderQuickBatchBar(items) {
   const wrap = document.getElementById('quickTimingBatchWrap');
   const bar = document.getElementById('quickTimingBatchBar');
@@ -236,29 +236,83 @@ function renderQuickBatchBar(items) {
     groups[slotName].push(item);
   });
 
-  // 약이 있는 시점만 버튼 생성
-  TIMING_SLOTS.forEach((ts) => {
-    const slotItems = groups[ts.slot];
-    if (!slotItems || slotItems.length === 0) return;
+  // 아침, 점심, 저녁 3줄 구조 정의
+  const mealSections = [
+    {
+      meal: '아침',
+      slots: [
+        { slot: '아침식전', label: '식전완료', type: 'pre' },
+        { slot: '아침식후', label: '식후완료', type: 'post' },
+      ],
+    },
+    {
+      meal: '점심',
+      slots: [
+        { slot: '점심식전', label: '식전완료', type: 'pre' },
+        { slot: '점심식후', label: '식후완료', type: 'post' },
+      ],
+    },
+    {
+      meal: '저녁',
+      slots: [
+        { slot: '저녁식전', label: '식전완료', type: 'pre' },
+        { slot: '저녁식후', label: '식후완료', type: 'post' },
+      ],
+    },
+  ];
 
-    const total = slotItems.length;
-    const taken = slotItems.filter((i) => i.taken).length;
-    const isAllDone = total > 0 && taken === total;
+  // 취침전 약이 등록되어 있는 경우 취침전 행 추가
+  if (groups['취침전'] && groups['취침전'].length > 0) {
+    mealSections.push({
+      meal: '취침',
+      slots: [
+        { slot: '취침전', label: '취침전완료', type: 'bed' },
+      ],
+    });
+  }
 
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = `quick-batch-btn ${ts.type}` + (isAllDone ? ' all-done' : '');
+  mealSections.forEach((section) => {
+    const row = document.createElement('div');
+    row.className = 'quick-batch-row';
 
-    if (isAllDone) {
-      btn.innerHTML = `<span>✓</span> <span>${ts.slot} 완료</span> <span class="badge-count">${taken}/${total}</span>`;
-      btn.title = '클릭하면 완료 상태를 취소합니다';
-    } else {
-      btn.innerHTML = `<span>👉</span> <span>${ts.slot} 복약 완료</span> <span class="badge-count">${taken}/${total}</span>`;
-      btn.title = `클릭하면 ${ts.slot} 약 ${total}개를 한 번에 완료 체크합니다`;
-    }
+    const label = document.createElement('div');
+    label.className = 'quick-batch-meal-badge';
+    label.textContent = section.meal;
+    row.appendChild(label);
 
-    btn.onclick = () => toggleBatchSlot(ts.slot, slotItems, isAllDone);
-    bar.appendChild(btn);
+    const btnGroup = document.createElement('div');
+    btnGroup.className = 'quick-batch-btn-group' + (section.slots.length === 1 ? ' single' : '');
+
+    section.slots.forEach((s) => {
+      const slotItems = groups[s.slot] || [];
+      const total = slotItems.length;
+      const taken = slotItems.filter((i) => i.taken).length;
+      const isAllDone = total > 0 && taken === total;
+
+      const btn = document.createElement('button');
+      btn.type = 'button';
+
+      if (total === 0) {
+        btn.className = `quick-batch-btn ${s.type} empty`;
+        btn.disabled = true;
+        btn.innerHTML = `<span>-</span> <span>${s.label.replace('완료', '')} 없음</span>`;
+        btn.title = `${section.meal} ${s.label.replace('완료', '')}에 예정된 약이 없습니다`;
+      } else {
+        btn.className = `quick-batch-btn ${s.type}` + (isAllDone ? ' all-done' : '');
+        if (isAllDone) {
+          btn.innerHTML = `<span>✓</span> <span>${s.label}</span> <span class="badge-count">${taken}/${total}</span>`;
+          btn.title = `클릭하면 ${s.slot} 완료를 취소합니다`;
+        } else {
+          btn.innerHTML = `<span>👉</span> <span>${s.label}</span> <span class="badge-count">${taken}/${total}</span>`;
+          btn.title = `클릭하면 ${s.slot} 약 ${total}개를 한 번에 완료 체크합니다`;
+        }
+        btn.onclick = () => toggleBatchSlot(s.slot, slotItems, isAllDone);
+      }
+      btnGroup.appendChild(btn);
+    });
+
+    row.appendChild(btnGroup);
+    bar.appendChild(row);
   });
 }
 

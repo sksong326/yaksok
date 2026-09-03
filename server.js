@@ -376,6 +376,47 @@ app.post('/api/logs/toggle', (req, res) => {
   res.json({ key, taken: !!data.logs[key] });
 });
 
+// ---- 일괄 복약 체크 (원클릭 식전/식후 완료) ----
+app.post('/api/logs/batch', (req, res) => {
+  const data = loadData();
+  const { date, items, taken } = req.body;
+  if (!date || !Array.isArray(items) || items.length === 0) {
+    return res.status(400).json({ error: 'invalid batch' });
+  }
+  const shouldTake = taken !== undefined ? !!taken : items.some((it) => !data.logs[`${date}|${it.medId}|${it.time}`]);
+  items.forEach((it) => {
+    const key = `${date}|${it.medId}|${it.time}`;
+    if (shouldTake) {
+      data.logs[key] = true;
+    } else {
+      delete data.logs[key];
+    }
+  });
+  saveData(data);
+  res.json({ ok: true, taken: shouldTake, count: items.length });
+});
+
+// ---- 데이터 소실 방지용 자동 복원 / 수동 복원 ----
+app.post('/api/data/restore', (req, res) => {
+  const data = loadData();
+  const incoming = req.body;
+  if (incoming && Array.isArray(incoming.patients) && incoming.patients.length > 0) {
+    const subscriptions = data.subscriptions || [];
+    const restored = {
+      patients: incoming.patients || [],
+      medications: incoming.medications || [],
+      logs: incoming.logs || {},
+      diets: incoming.diets || [],
+      exercises: incoming.exercises || [],
+      appointments: incoming.appointments || [],
+      subscriptions,
+    };
+    saveData(restored);
+    return res.json({ ok: true, message: '데이터가 안전하게 복원되었습니다.' });
+  }
+  res.status(400).json({ error: '유효한 복원 데이터가 아닙니다.' });
+});
+
 // ---- 식단(음식 허용/금지) 목록 ----
 // status: 'ok' (먹어도 됨) | 'caution' (주의) | 'avoid' (금지)
 app.post('/api/diets', (req, res) => {

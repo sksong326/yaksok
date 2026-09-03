@@ -103,15 +103,6 @@ body {
 .day-toggle.active { background: var(--primary); color: #fff; }
 .mt { margin-top: 16px; }
 
-.excel-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.excel-preview-group { margin-top: 12px; }
-.excel-preview-title { font-weight: 600; font-size: 0.9rem; margin: 0 0 8px; }
-.excel-row { display: flex; align-items: flex-start; gap: 10px; border: 1px solid var(--line); border-radius: 14px; padding: 10px 14px; margin-bottom: 6px; background: var(--surface); }
-.excel-row.invalid { border-color: var(--danger); background: rgba(217,100,91,0.06); }
-.excel-row-text { font-size: 0.9rem; flex: 1; }
-.excel-row-warning { font-size: 0.78rem; color: var(--danger); margin-top: 2px; }
-.excel-empty-note { font-size: 0.85rem; color: var(--ink-soft); }
-
 .mt-sm { margin-top: 8px; }
 .bulk-items-list { margin-top: 8px; display: flex; flex-direction: column; gap: 8px; }
 .bulk-item-row { display: flex; gap: 8px; align-items: center; }
@@ -143,3 +134,161 @@ body {
 .alarm-item-title { font-family: 'Fraunces', serif; font-weight: 600; margin: 0; font-size: 0.95rem; }
 .alarm-item-desc { margin: 2px 0 0; font-size: 0.8rem; color: var(--ink-soft); }
 .alarm-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+
+/* ---- 접이식 섹션 (Collapsible) 스타일 ---- */
+.collapsible-section {
+  border-top: 1px solid var(--line);
+  padding-top: 20px;
+}
+.collapsible-header {
+  cursor: pointer;
+  user-select: none;
+  padding: 8px 6px;
+  border-radius: 12px;
+  transition: background 0.15s ease;
+}
+.collapsible-header:hover {
+  background: var(--surface-alt);
+}
+.section-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.collapse-arrow {
+  display: inline-block;
+  font-size: 0.75rem;
+  color: var(--ink-soft);
+  transition: transform 0.2s ease;
+  width: 14px;
+  text-align: center;
+}
+.collapse-arrow.open {
+  transform: rotate(90deg);
+}
+.count-badge {
+  display: inline-block;
+  font-size: 0.75rem;
+  font-weight: 600;
+  background: var(--surface-alt);
+  color: var(--ink-soft);
+  padding: 2px 8px;
+  border-radius: 9999px;
+  border: 1px solid var(--line);
+}
+.collapsible-body {
+  transition: max-height 0.25s ease;
+}
+.collapsible-body.collapsed {
+  display: none;
+}
+
+/* ---- 복약 타이밍 뱃지 (식전: 빨강 / 식후: 파랑 / 취침전: 초록) ---- */
+.timing-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.72rem;
+  font-weight: 700;
+  border-radius: 6px;
+  padding: 2px 7px;
+  line-height: 1.25;
+  letter-spacing: -0.02em;
+  white-space: nowrap;
+  flex-shrink: 0;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.08);
+}
+/* 식전: 선명한 빨간색 */
+.timing-badge.timing-pre {
+  background: #DC2626;
+  color: #FFFFFF;
+}
+/* 식후: 선명한 파란색 */
+.timing-badge.timing-post {
+  background: #2563EB;
+  color: #FFFFFF;
+}
+/* 취침전: 선명한 초록색 */
+.timing-badge.timing-bed {
+  background: #16A34A;
+  color: #FFFFFF;
+}
+
+/* 복약 목록 내 시간 태그 행 */
+.med-item-times-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 5px;
+}
+.med-time-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--surface-alt);
+  border-radius: 6px;
+  padding: 3px 7px;
+}
+.med-time-tag .time-mono {
+  font-size: 0.8rem;
+  color: var(--ink);
+}
+
+/* 모달 내 복약 타이밍 프리셋 선택 버튼 */
+.timing-presets-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+.timing-preset-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 9999px;
+  padding: 6px 11px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  border: 1.5px solid transparent;
+  cursor: pointer;
+  background: var(--surface-alt);
+  transition: all 0.15s ease;
+}
+/* 프리셋 버튼 식전: 빨강 계열 */
+.timing-preset-btn.pre {
+  background: #FEE2E2;
+  color: #DC2626;
+  border-color: #FECACA;
+}
+.timing-preset-btn.pre:hover,
+.timing-preset-btn.pre.active {
+  background: #DC2626;
+  color: #FFFFFF;
+  border-color: #DC2626;
+}
+/* 프리셋 버튼 식후: 파랑 계열 */
+.timing-preset-btn.post {
+  background: #DBEAFE;
+  color: #2563EB;
+  border-color: #BFDBFE;
+}
+.timing-preset-btn.post:hover,
+.timing-preset-btn.post.active {
+  background: #2563EB;
+  color: #FFFFFF;
+  border-color: #2563EB;
+}
+/* 프리셋 버튼 취침전: 초록 계열 */
+.timing-preset-btn.bed {
+  background: #DCFCE7;
+  color: #16A34A;
+  border-color: #BBF7D0;
+}
+.timing-preset-btn.bed:hover,
+.timing-preset-btn.bed.active {
+  background: #16A34A;
+  color: #FFFFFF;
+  border-color: #16A34A;
+}
+

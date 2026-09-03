@@ -23,10 +23,10 @@ webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
 
 // ---- 아주 단순한 파일 기반 저장소 ----
 function loadData() {
-  const fallback = { patients: [], medications: [], logs: {}, subscriptions: [], diets: [], exercises: [], appointments: [] };
+  const fallback = { patients: [], medications: [], logs: {}, subscriptions: [], diets: [], exercises: [], appointments: [], notifiedKeys: {} };
   try {
     const parsed = JSON.parse(fs.readFileSync(DATA_FILE, 'utf-8'));
-    return { ...fallback, ...parsed };
+    return { ...fallback, ...parsed, notifiedKeys: parsed.notifiedKeys || {} };
   } catch (e) {
     return fallback;
   }
@@ -41,11 +41,11 @@ function uid(prefix) {
 
 function pad(n) { return String(n).padStart(2, '0'); }
 
-// 서버 시간대와 무관하게 항상 한국 시간 기준으로 계산
+// 서버 시간대(UTC 등)와 무관하게 항상 정확한 한국 표준시(KST, UTC+9) 계산
 function nowKST() {
   const now = new Date();
-  const kst = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Seoul' }));
-  return kst;
+  const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
+  return new Date(utc + (9 * 60 * 60 * 1000));
 }
 function dateKeyKST(d) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
@@ -209,8 +209,22 @@ app.get('/api/vapid-public-key', (req, res) => {
 
 app.get('/api/data', (req, res) => {
   const data = loadData();
-  const { subscriptions, ...safe } = data; // 구독 정보는 클라이언트로 보내지 않음
-  res.json(safe);
+  const { subscriptions, ...safe } = data; // 구독 정보(민감정보)는 제외하되 활성 기기 수는 전달
+  res.json({
+    ...safe,
+    subscriptionCount: (data.subscriptions || []).length,
+  });
+});
+
+app.get('/api/health', (req, res) => {
+  const d = nowKST();
+  const data = loadData();
+  res.json({
+    status: 'ok',
+    timeKST: `${dateKeyKST(d)} ${hmKST(d)}`,
+    activeSubscriptions: (data.subscriptions || []).length,
+    appointmentsCount: (data.appointments || []).length,
+  });
 });
 
 // ---- 환자(가족) ----
@@ -504,54 +518,78 @@ app.post('/api/subscribe', (req, res) => {
   const data = loadData();
   const { subscription, deviceName } = req.body;
   if (!subscription || !subscription.endpoint) return res.status(400).json({ error: 'invalid subscription' });
-  const exists = data.subscriptions.find((s) => s.subscription.endpoint === subscription.endpoint);
-  if (!exists) {
-    data.subscriptions.push({ id: uid('sub'), deviceName: deviceName || '기기', subscription });
-    saveData(data);
+  if (!Array.isArray(data.subscriptions)) data.subscriptions = [];
+  
+  const idx = data.subscriptions.findIndex((s) => s.subscription.endpoint === subscription.endpoint);
+  if (idx === -1) {
+    data.subscriptions.push({
+      id: uid('sub'),
+      deviceName: deviceName || '기기',
+      subscription,
+      updatedAt: new Date().toISOString()
+    });
+  } else {
+    data.subscriptions[idx] = {
+      ...data.subscriptions[idx],
+      subscription,
+      deviceName: deviceName || data.subscriptions[idx].deviceName,
+      updatedAt: new Date().toISOString()
+    };
   }
-  res.json({ ok: true });
+  saveData(data);
+  console.log(`[구독 등록 완료] 현재 총 ${data.subscriptions.length}개 기기 등록됨`);
+  res.json({ ok: true, count: data.subscriptions.length });
 });
 
 app.post('/api/unsubscribe', (req, res) => {
   const data = loadData();
   const { endpoint } = req.body;
-  data.subscriptions = data.subscriptions.filter((s) => s.subscription.endpoint !== endpoint);
+  data.subscriptions = (data.subscriptions || []).filter((s) => s.subscription.endpoint !== endpoint);
   saveData(data);
   res.json({ ok: true });
 });
 
 // 테스트용: 등록된 모든 기기에 테스트 알림 보내기
 app.post('/api/test-push', async (req, res) => {
-  await sendToAll({ title: '테스트 알림', body: '이 알림이 보이면 정상 작동이에요 🎉' });
-  res.json({ ok: true });
+  const count = (loadData().subscriptions || []).length;
+  await sendToAll({
+    title: '테스트 알림 🔔',
+    body: `현재 ${count}개의 기기에 알림이 정상 연결되어 있습니다! 🎉`
+  });
+  res.json({ ok: true, sentTo: count });
 });
 
 async function sendToAll(payload) {
   const data = loadData();
+  const subs = data.subscriptions || [];
+  console.log(`[알림 발송 시도] 총 ${subs.length}개 기기 대상: "${payload.title}"`);
+  if (subs.length === 0) {
+    console.warn('[알림 발송 실패] 등록된 푸시 수신 기기가 0개입니다. 브라우저에서 알림 권한을 허용해주세요.');
+    return;
+  }
   const results = await Promise.allSettled(
-    data.subscriptions.map((s) => webpush.sendNotification(s.subscription, JSON.stringify(payload)))
+    subs.map((s) => webpush.sendNotification(s.subscription, JSON.stringify(payload)))
   );
-  // 만료되었거나 더 이상 유효하지 않은 구독은 정리
+  // 만료되었거나 더 이상 유효하지 않은 구독(404, 410)은 정리
   const stillValid = [];
-  data.subscriptions.forEach((s, i) => {
+  subs.forEach((s, i) => {
     const r = results[i];
     if (r.status === 'fulfilled' || (r.reason && r.reason.statusCode !== 404 && r.reason.statusCode !== 410)) {
       stillValid.push(s);
     }
   });
-  if (stillValid.length !== data.subscriptions.length) {
+  if (stillValid.length !== subs.length) {
     data.subscriptions = stillValid;
     saveData(data);
   }
 }
 
-// ---- 매분 복약/운동 시간 체크 (한국 시간 기준) ----
+// ---- 매분 복약/운동/진료 시간 체크 (한국 시간 기준) ----
 // 복약: 체크 안 하면 정해진 시간이 지나도 최대 3번까지 재알림.
-// 운동: 권고사항이라 시간에 딱 한 번만 알려주고 반복하지 않음.
+// 운동/진료: 시간이 지났더라도 당일 미발송된 경우 누락 없이 즉시 1회 발송(Catch-up) 보장.
 const REPEAT_MAX_COUNT = 3; // 최초 알림 포함 최대 몇 번까지 보낼지
 
-const lastNotifiedAt = new Map(); // notifyKey -> { lastMin, count }
-const exerciseNotified = new Set();
+const lastNotifiedAt = new Map(); // 복약용 재알림 추적 (notifyKey -> { lastMin, count })
 
 function inferTimingSlot(timeStr) {
   if (!timeStr) return '';
@@ -565,7 +603,6 @@ function inferTimingSlot(timeStr) {
   if (totalMin >= 1095 && totalMin < 1260) return '저녁식후';
   return '취침전';
 }
- // notifyKey (하루 1번만 보내면 되므로 Set으로 충분)
 
 cron.schedule('* * * * *', async () => {
   const d = nowKST();
@@ -574,8 +611,19 @@ cron.schedule('* * * * *', async () => {
   const hm = hmKST(d);
   const weekday = d.getDay();
   const data = loadData();
+  if (!data.notifiedKeys) data.notifiedKeys = {};
+  let dataChanged = false;
 
-  // ---- 복약: 최대 3번까지 재알림 ----
+  // 7일 지난 발송 키 정리 (용량 최적화)
+  const cutoff = Date.now() - (7 * 24 * 60 * 60 * 1000);
+  for (const [k, v] of Object.entries(data.notifiedKeys)) {
+    if (typeof v === 'string' && new Date(v).getTime() < cutoff) {
+      delete data.notifiedKeys[k];
+      dataChanged = true;
+    }
+  }
+
+  // 1. ---- 복약: 최대 3번까지 재알림 ----
   data.medications.forEach((med) => {
     if (!med.days.includes(weekday)) return;
     const patient = data.patients.find((p) => p.id === med.patientId);
@@ -607,27 +655,29 @@ cron.schedule('* * * * *', async () => {
     });
   });
 
-  // ---- 운동: 권고사항이므로 시간 맞을 때 딱 한 번만 ----
-  data.exercises.forEach((ex) => {
+  // 2. ---- 운동: 권고사항이므로 목표 시각 이후 30분 이내 1회 발송 (지연 누락 방지) ----
+  (data.exercises || []).forEach((ex) => {
     if (!ex.days.includes(weekday)) return;
     ex.times.forEach((time) => {
-      if (time !== hm) return; // 정각 그 순간에만 (반복 없음)
-      const key = `${dateKey}|ex:${ex.id}|${time}`;
-      if (data.logs[key]) return;
-      const notifyKey = `${dateKey}_ex_${ex.id}_${time}`;
-      if (exerciseNotified.has(notifyKey)) return;
-      exerciseNotified.add(notifyKey);
-
-      const patient = data.patients.find((p) => p.id === ex.patientId);
-      sendToAll({
-        title: '운동할 시간이에요 🏃',
-        body: `${patient ? patient.name : ''} · ${ex.name} (${time})`,
-      });
+      const targetMin = timeToMinutes(time);
+      if (nowMin >= targetMin && nowMin < targetMin + 30) {
+        const key = `${dateKey}|ex:${ex.id}|${time}`;
+        if (data.logs[key]) return; // 이미 운동 체크 완료
+        const notifyKey = `ex_${ex.id}_${time}_${dateKey}`;
+        if (!data.notifiedKeys[notifyKey]) {
+          data.notifiedKeys[notifyKey] = new Date().toISOString();
+          dataChanged = true;
+          const patient = data.patients.find((p) => p.id === ex.patientId);
+          sendToAll({
+            title: '운동할 시간이에요 🏃',
+            body: `${patient ? patient.name : ''} · ${ex.name} (${time})`,
+          });
+        }
+      }
     });
   });
 
-
-  // ---- 병원 방문 일정 알림 체크 ----
+  // 3. ---- 병원 방문 일정 알림 체크 (누락 방지 Catch-up 적용) ----
   const tomorrowDate = new Date(d);
   tomorrowDate.setDate(tomorrowDate.getDate() + 1);
   const tomorrowKey = dateKeyKST(tomorrowDate);
@@ -636,26 +686,31 @@ cron.schedule('* * * * *', async () => {
     const patient = data.patients.find((p) => p.id === apt.patientId);
     const patientName = patient ? patient.name : '가족';
 
-    // 1) 방문 전날 일괄 알림 (기본: 전날 21:00)
+    // 1) 방문 전날 일괄 알림 (기본: 전날 21:00 이후 ~ 당일 자정 전)
     if (apt.date === tomorrowKey) {
       const isNotifyDay = apt.notifyPrevDay !== false;
       const targetTime = apt.prevDayTime || '21:00';
-      if (isNotifyDay && targetTime === hm) {
-        const notifyKey = `${dateKey}_prev_apt_${apt.id}_${hm}`;
-        if (!exerciseNotified.has(notifyKey)) {
-          exerciseNotified.add(notifyKey);
+      const targetMin = timeToMinutes(targetTime);
+      if (isNotifyDay && nowMin >= targetMin && nowMin < 1440) {
+        const notifyKey = `prev_apt_${apt.id}_${apt.date}`;
+        if (!data.notifiedKeys[notifyKey]) {
+          data.notifiedKeys[notifyKey] = new Date().toISOString();
+          dataChanged = true;
           const docSummary = (apt.doctors || [])
-            .map((doc) => `${doc.name} 교수(${doc.time}${doc.dept ? '·' + doc.dept : ''})`)
+            .map((doc) => `${doc.name}${doc.dept ? '·' + doc.dept : ''}(${doc.time})`)
             .join(', ');
+          const fastingNotice = apt.fastingRequired ? ' ⚠️ 금식 여부를 꼭 확인하세요.' : '';
+          const noteNotice = apt.note ? ` (${apt.note})` : '';
           sendToAll({
             title: `[내일 병원 방문] ${patientName}님 ${apt.hospitalName} 진료 안내`,
-            body: `내일 ${apt.hospitalName} 진료: ${docSummary}. 금식하셔야 되나요? 확인해주세요.`
+            body: `내일 ${apt.hospitalName} 일정: ${docSummary}.${fastingNotice}${noteNotice}`
           });
         }
       }
     }
 
-    // 2) 방문 당일 진료 N시간 전(기본: 3시간 전) 각 교수별 알림
+    // 2) 방문 당일 진료 N시간 전(기본: 3시간 전) 각 교수/검사별 알림
+    // 알림 예정 시각(alertMin)부터 실제 진료 시각(docTotalMin) 직전까지 미발송 시 즉시 발송 보장!
     if (apt.date === dateKey) {
       const hoursBefore = apt.hoursBefore !== undefined ? Number(apt.hoursBefore) : 3;
       (apt.doctors || []).forEach((doc) => {
@@ -663,29 +718,48 @@ cron.schedule('* * * * *', async () => {
         const [dh, dm] = doc.time.split(':').map(Number);
         const docTotalMin = (dh || 0) * 60 + (dm || 0);
         const alertMin = docTotalMin - (hoursBefore * 60);
-        if (alertMin >= 0) {
-          const alertH = Math.floor(alertMin / 60);
-          const alertM = alertMin % 60;
-          const alertHM = `${pad(alertH)}:${pad(alertM)}`;
-          if (alertHM === hm) {
-            const notifyKey = `${dateKey}_apt_doc_${apt.id}_${doc.id || doc.name}_${hm}`;
-            if (!exerciseNotified.has(notifyKey)) {
-              exerciseNotified.add(notifyKey);
-              sendToAll({
-                title: `[병원 방문 ${hoursBefore}시간 전] ${doc.name} 교수 진료 안내`,
-                body: `${patientName}님 ${apt.hospitalName} ${doc.name} 교수님 진료(${doc.time}${doc.dept ? '·' + doc.dept : ''}) ${hoursBefore}시간 전입니다. 금식하셔야 되나요? 확인해주세요.`
-              });
-            }
+
+        // N시간 전 시점부터 진료 시작 시각 전까지 아직 안 보냈으면 즉시 발송
+        if (alertMin >= 0 && nowMin >= alertMin && nowMin < docTotalMin) {
+          const notifyKey = `apt_doc_${apt.id}_${doc.id || doc.name}_${doc.time}_${dateKey}`;
+          if (!data.notifiedKeys[notifyKey]) {
+            data.notifiedKeys[notifyKey] = new Date().toISOString();
+            dataChanged = true;
+            const isProf = doc.name.includes('교수');
+            const label = isProf ? `${doc.name} 진료` : `${doc.name}`;
+            const fastingNotice = apt.fastingRequired ? ' ⚠️ 금식 여부를 확인하세요!' : '';
+            const noteNotice = apt.note ? ` (${apt.note})` : '';
+            sendToAll({
+              title: `[병원 ${hoursBefore}시간 전] ${label} 안내`,
+              body: `${patientName}님 ${apt.hospitalName} ${label}(${doc.time}${doc.dept ? '·' + doc.dept : ''}) ${hoursBefore}시간 전입니다.${fastingNotice}${noteNotice}`
+            });
           }
         }
       });
     }
   });
 
+  if (dataChanged) {
+    saveData(data);
+  }
+
   // 메모리 누수 방지
   if (lastNotifiedAt.size > 3000) lastNotifiedAt.clear();
-  if (exerciseNotified.size > 3000) exerciseNotified.clear();
 }, { timezone: 'Asia/Seoul' });
+
+// ---- Render 무료 티어 슬립(Spin-down) 방지 Keep-Alive ----
+const RENDER_URL = process.env.RENDER_EXTERNAL_URL || 'https://yaksok.onrender.com';
+if (RENDER_URL) {
+  // 10분마다 자체 헬스체크 핑을 호출하여 Render 15분 비활성 슬립 방지
+  setInterval(() => {
+    try {
+      const client = RENDER_URL.startsWith('https') ? require('https') : require('http');
+      client.get(`${RENDER_URL}/api/health`, (res) => {
+        // keep-alive ping ok
+      }).on('error', () => {});
+    } catch (e) {}
+  }, 10 * 60 * 1000);
+}
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {

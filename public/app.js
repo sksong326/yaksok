@@ -1551,34 +1551,104 @@ function urlBase64ToUint8Array(base64String) {
 
 async function initPush() {
   const btn = document.getElementById('notifBtn');
+  const testBtn = document.getElementById('testPushBtn');
+
+  if (testBtn) {
+    testBtn.onclick = async () => {
+      try {
+        testBtn.disabled = true;
+        testBtn.textContent = '발송 중...';
+        const res = await api('/api/test-push', { method: 'POST' });
+        alert(`🎉 테스트 알림을 발송했습니다! (수신 기기: ${res.sentTo || 0}대)\n잠시 후 폰 화면 상단 알림을 확인해보세요.`);
+      } catch (e) {
+        alert('테스트 알림 발송 중 문제가 생겼어요.');
+      } finally {
+        testBtn.disabled = false;
+        testBtn.textContent = '🔔 테스트';
+      }
+    };
+  }
+
+  if (!btn) return;
   if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
     btn.textContent = '이 브라우저는 지원하지 않아요';
     btn.disabled = true;
     return;
   }
-  const reg = await navigator.serviceWorker.register('/sw.js');
-  const existing = await reg.pushManager.getSubscription();
-  if (existing && Notification.permission === 'granted') {
-    btn.textContent = '알림 켜짐';
-    btn.classList.add('btn-primary');
-    btn.classList.remove('btn-outline');
-  }
-  btn.onclick = async () => {
-    try {
-      const perm = await Notification.requestPermission();
-      if (perm !== 'granted') { alert('알림 권한이 필요해요.'); return; }
-      const { publicKey } = await api('/api/vapid-public-key');
-      const sub = existing || await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(publicKey) });
-      await api('/api/subscribe', { method: 'POST', body: JSON.stringify({ subscription: sub, deviceName: navigator.userAgent.slice(0, 40) }) });
+
+  try {
+    const reg = await navigator.serviceWorker.register('/sw.js');
+    const existing = await reg.pushManager.getSubscription();
+
+    // 1. 이미 알림 권한이 있는 경우: 서버에 구독 정보 자동 동기화 (서버 재배포 시 구독 유실 완벽 복구!)
+    if (Notification.permission === 'granted') {
       btn.textContent = '알림 켜짐';
       btn.classList.add('btn-primary');
       btn.classList.remove('btn-outline');
+
+      try {
+        let sub = existing;
+        if (!sub) {
+          const { publicKey } = await api('/api/vapid-public-key');
+          sub = await reg.pushManager.subscribe({
+            userVisibleOnly: true,
+            applicationServerKey: urlBase64ToUint8Array(publicKey),
+          });
+        }
+        if (sub) {
+          await api('/api/subscribe', {
+            method: 'POST',
+            body: JSON.stringify({ subscription: sub, deviceName: navigator.userAgent.slice(0, 40) }),
+          });
+          console.log('푸시 구독 서버 자동 동기화 완료');
+        }
+      } catch (err) {
+        console.warn('푸시 구독 자동 동기화 실패:', err);
+      }
+    }
+  } catch (e) {
+    console.error('서비스워커 등록 실패:', e);
+  }
+
+  btn.onclick = async () => {
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      const perm = await Notification.requestPermission();
+      if (perm !== 'granted') { alert('알림 권한이 필요해요.'); return; }
+      const { publicKey } = await api('/api/vapid-public-key');
+      const sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(publicKey),
+      });
+      const res = await api('/api/subscribe', {
+        method: 'POST',
+        body: JSON.stringify({ subscription: sub, deviceName: navigator.userAgent.slice(0, 40) }),
+      });
+      btn.textContent = '알림 켜짐';
+      btn.classList.add('btn-primary');
+      btn.classList.remove('btn-outline');
+      alert(`알림이 정상적으로 등록되었습니다! (연결된 기기: ${res.count || 1}대) 🎉`);
     } catch (e) {
       console.error(e);
       alert('알림 설정 중 문제가 생겼어요.');
     }
   };
 }
+
+// 앱 화면 복귀 시 구독 자동 재동기화 (PWA 백그라운드 깨어남 대응)
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && Notification.permission === 'granted' && 'serviceWorker' in navigator) {
+    navigator.serviceWorker.ready.then(async (reg) => {
+      const sub = await reg.pushManager.getSubscription();
+      if (sub) {
+        api('/api/subscribe', {
+          method: 'POST',
+          body: JSON.stringify({ subscription: sub, deviceName: navigator.userAgent.slice(0, 40) }),
+        }).catch(() => {});
+      }
+    }).catch(() => {});
+  }
+});
 
 // ---------------- 초기화 ----------------
 document.getElementById('emptyAddBtn').onclick = openPatientModal;

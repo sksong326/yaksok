@@ -644,12 +644,9 @@ function renderAppointments() {
       dDayClass = 'past';
     }
 
-    // 진료 및 검사 목록 HTML
-    const doctorsHtml = (apt.doctors || []).map((doc) => {
+    // 진료 및 검사 목록 HTML (좌측 세로배지 + 중앙 2줄 정보 + 우측 개별 알림 버튼)
+    const doctorsHtml = (apt.doctors || []).map((doc, docIdx) => {
       const isExam = doc.type === 'exam';
-      const typeBadge = isExam
-        ? `<span class="apt-cat-chip exam">🔬 검사</span>`
-        : `<span class="apt-cat-chip clinic">🩺 진료</span>`;
       const cleanName = (doc.name || '').trim();
       let displayName = cleanName;
       if (isExam) {
@@ -658,13 +655,36 @@ function renderAppointments() {
         if (!displayName.endsWith('교수')) displayName = `${displayName} 교수`;
       }
 
+      const icon = isExam ? '🔬' : '🩺';
+      const label = isExam ? '검사' : '진료';
+      const typeClass = isExam ? 'exam' : 'clinic';
+      const deptText = doc.dept ? escapeHtml(doc.dept) : '';
+
       return `
-        <div class="apt-doc-item">
-          <div class="apt-doc-main">
-            ${typeBadge}
-            <span class="apt-doc-time">${doc.time || ''}</span>
-            <span class="apt-doc-name">${escapeHtml(displayName)}</span>
-            ${doc.dept ? `<span class="apt-doc-dept">· ${escapeHtml(doc.dept)}</span>` : ''}
+        <div class="apt-doc-row" data-doc-idx="${docIdx}">
+          <!-- 좌측: 청진기/현미경 밑에 진료/검사 두 글자 표기 -->
+          <div class="apt-col-badge ${typeClass}" title="${displayName} 개별 알림 발송">
+            <span class="badge-icon">${icon}</span>
+            <span class="badge-label">${label}</span>
+          </div>
+
+          <!-- 중앙: 첫 줄 시간/이름, 둘째 줄 진료과/장소 -->
+          <div class="apt-col-info">
+            <div class="apt-line-top">
+              <span class="apt-time-badge">${escapeHtml(doc.time || '--:--')}</span>
+              <span class="apt-name-title">${escapeHtml(displayName)}</span>
+            </div>
+            <div class="apt-line-bottom">
+              ${deptText ? `<span class="apt-dept-text">📍 ${deptText}</span>` : '<span class="apt-dept-text" style="color:var(--ink-soft);opacity:0.6;">(장소 미기재)</span>'}
+            </div>
+          </div>
+
+          <!-- 우측: 개별 알림 버튼 -->
+          <div class="apt-col-action">
+            <button type="button" class="apt-single-notif-btn" data-doc-idx="${docIdx}" title="${displayName} 개별 알림 발송">
+              <span class="btn-icon">📢</span>
+              <span class="btn-label">알림</span>
+            </button>
           </div>
         </div>
       `;
@@ -678,7 +698,7 @@ function renderAppointments() {
           <span class="apt-dday-badge ${dDayClass}">${dDayText}</span>
         </div>
         <div class="med-item-actions">
-          <button class="btn-pill btn-small btn-outline apt-notif-btn" type="button" title="이 진료/검사 일정 알림 지금 즉시 발송">📢 알림 발송</button>
+          <button class="btn-pill btn-small btn-outline apt-notif-btn" type="button" title="이 일정 전체 알림 즉시 발송">📢 전체 알림</button>
           <button class="btn-pill btn-small btn-outline apt-edit-btn" type="button">수정</button>
           <button class="danger-btn apt-del-btn" type="button">🗑</button>
         </div>
@@ -701,8 +721,30 @@ function renderAppointments() {
       ${apt.note ? `<div class="apt-note-text">📝 ${escapeHtml(apt.note)}</div>` : ''}
     `;
 
+    // 전체 알림 발송 버튼
     const notifBtn = card.querySelector('.apt-notif-btn');
     if (notifBtn) notifBtn.onclick = () => sendAptNotificationNow(apt);
+
+    // 각 진료/검사별 개별 알림 버튼 및 배지 클릭 이벤트 연동
+    card.querySelectorAll('.apt-single-notif-btn').forEach((btn) => {
+      btn.onclick = (e) => {
+        e.stopPropagation();
+        const docIdx = Number(btn.getAttribute('data-doc-idx'));
+        const doc = (apt.doctors || [])[docIdx];
+        if (doc) sendSingleDoctorNotif(apt, doc);
+      };
+    });
+
+    card.querySelectorAll('.apt-col-badge').forEach((badge) => {
+      badge.onclick = (e) => {
+        e.stopPropagation();
+        const row = badge.closest('.apt-doc-row');
+        const docIdx = Number(row.getAttribute('data-doc-idx'));
+        const doc = (apt.doctors || [])[docIdx];
+        if (doc) sendSingleDoctorNotif(apt, doc);
+      };
+    });
+
     card.querySelector('.apt-edit-btn').onclick = () => openAptModal(apt);
     card.querySelector('.apt-del-btn').onclick = () => removeApt(apt.id);
     list.appendChild(card);
@@ -765,7 +807,7 @@ function openAptModal(apt) {
   }
   renderAptDoctors();
 
-  document.getElementById('aptModal').classList.remove('hidden');
+  openModal('aptModal');
 }
 
 function renderAptDoctors() {
@@ -777,11 +819,10 @@ function renderAptDoctors() {
 
     const cardRow = document.createElement('div');
     cardRow.className = 'apt-doc-edit-card';
-    cardRow.style.cssText = 'background: var(--surface-alt); padding: 8px 10px; border-radius: 8px; margin-bottom: 8px; border: 1px solid var(--line);';
 
-    // 카테고리 선택 바 (진료 / 검사) & 삭제 버튼
-    const topRow = document.createElement('div');
-    topRow.style.cssText = 'display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px;';
+    // 1행: 카테고리 토글(진료/검사) + 시간 설정 + 삭제 버튼
+    const row1 = document.createElement('div');
+    row1.style.cssText = 'display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap;';
 
     const toggleGroup = document.createElement('div');
     toggleGroup.className = 'apt-type-toggle-group';
@@ -790,18 +831,12 @@ function renderAptDoctors() {
     clinicBtn.type = 'button';
     clinicBtn.className = `apt-type-toggle-btn ${!isExam ? 'active clinic' : ''}`;
     clinicBtn.innerHTML = '🩺 진료 (교수)';
-    clinicBtn.title = '진료로 선택 시 뒤에 자동으로 교수 호칭이 붙습니다';
     clinicBtn.onclick = () => {
       if (doc.type === 'clinic') return;
       doc.type = 'clinic';
-      // 검사 -> 진료 전환 시: '검사' 접미사를 '교수'로 교체하거나 '교수' 추가
       let cur = (doc.name || '').trim();
-      if (cur.endsWith('검사')) {
-        cur = cur.replace(/\s*검사$/, '').trim();
-      }
-      if (cur && !cur.endsWith('교수')) {
-        cur = `${cur} 교수`;
-      }
+      if (cur.endsWith('검사')) cur = cur.replace(/\s*검사$/, '').trim();
+      if (cur && !cur.endsWith('교수')) cur = `${cur} 교수`;
       doc.name = cur;
       renderAptDoctors();
     };
@@ -810,31 +845,41 @@ function renderAptDoctors() {
     examBtn.type = 'button';
     examBtn.className = `apt-type-toggle-btn ${isExam ? 'active exam' : ''}`;
     examBtn.innerHTML = '🔬 검사';
-    examBtn.title = '검사로 선택 시 뒤에 자동으로 검사 호칭이 붙습니다';
     examBtn.onclick = () => {
       if (doc.type === 'exam') return;
       doc.type = 'exam';
-      // 진료 -> 검사 전환 시: '교수' 접미사를 '검사'로 교체하거나 '검사' 추가
       let cur = (doc.name || '').trim();
-      if (cur.endsWith('교수')) {
-        cur = cur.replace(/\s*교수$/, '').trim();
-      }
-      if (cur && !cur.endsWith('검사')) {
-        cur = `${cur} 검사`;
-      }
+      if (cur.endsWith('교수')) cur = cur.replace(/\s*교수$/, '').trim();
+      if (cur && !cur.endsWith('검사')) cur = `${cur} 검사`;
       doc.name = cur;
       renderAptDoctors();
     };
 
     toggleGroup.appendChild(clinicBtn);
     toggleGroup.appendChild(examBtn);
-    topRow.appendChild(toggleGroup);
+
+    const rightControls = document.createElement('div');
+    rightControls.style.cssText = 'display:flex; align-items:center; gap:8px;';
+
+    const timeWrap = document.createElement('div');
+    timeWrap.style.cssText = 'display:flex; align-items:center; gap:4px;';
+    const timeLabel = document.createElement('span');
+    timeLabel.style.cssText = 'font-size:0.75rem; color:var(--ink-soft); font-weight:600;';
+    timeLabel.textContent = '⏰';
+    const timeInput = document.createElement('input');
+    timeInput.type = 'time';
+    timeInput.className = 'field-input time-input';
+    timeInput.value = doc.time || '10:00';
+    timeInput.style.cssText = 'width:96px; margin-top:0; padding:4px 8px; font-size:0.85rem; background:var(--surface);';
+    timeInput.oninput = (e) => { aptDoctorsDraft[idx].time = e.target.value; };
+    timeWrap.appendChild(timeLabel);
+    timeWrap.appendChild(timeInput);
 
     const removeBtn = document.createElement('button');
     removeBtn.type = 'button';
     removeBtn.className = 'bulk-item-remove';
     removeBtn.textContent = '✕ 삭제';
-    removeBtn.style.cssText = 'font-size: 0.75rem; color: var(--danger); background: none; border: none; cursor: pointer; padding: 2px 6px;';
+    removeBtn.style.cssText = 'font-size:0.75rem; color:var(--danger); background:none; border:none; cursor:pointer; padding:4px 6px; font-weight:600;';
     removeBtn.onclick = () => {
       if (aptDoctorsDraft.length <= 1) {
         alert('진료 및 검사 일정은 최소 1개 이상 입력해야 합니다.');
@@ -843,40 +888,32 @@ function renderAptDoctors() {
       aptDoctorsDraft.splice(idx, 1);
       renderAptDoctors();
     };
-    topRow.appendChild(removeBtn);
 
-    cardRow.appendChild(topRow);
+    rightControls.appendChild(timeWrap);
+    rightControls.appendChild(removeBtn);
 
-    // 인풋 행 (이름, 시간, 장소)
-    const inputsRow = document.createElement('div');
-    inputsRow.style.cssText = 'display: flex; gap: 6px; align-items: center;';
+    row1.appendChild(toggleGroup);
+    row1.appendChild(rightControls);
+    cardRow.appendChild(row1);
 
+    // 2행: 의사명 / 검사명 입력 (모바일에서도 시원하게 전체 너비)
     const nameInput = document.createElement('input');
     nameInput.className = 'field-input';
-    nameInput.placeholder = isExam ? '검사명 (예: CT, 심초음파)' : '의사/교수명 (예: 하태용 교수)';
+    nameInput.placeholder = isExam ? '검사명 입력 (예: CT 간이식동적검사, 심초음파)' : '의사/교수명 입력 (예: 하태용 교수, 김철수)';
     nameInput.value = doc.name;
-    nameInput.style.cssText = 'flex: 2.2; margin-top: 0; background: var(--surface);';
+    nameInput.style.cssText = 'width:100%; margin-top:0; background:var(--surface);';
     nameInput.oninput = (e) => { aptDoctorsDraft[idx].name = e.target.value; };
+    cardRow.appendChild(nameInput);
 
-    const timeInput = document.createElement('input');
-    timeInput.type = 'time';
-    timeInput.className = 'field-input time-input';
-    timeInput.value = doc.time || '10:00';
-    timeInput.style.cssText = 'flex: 1.3; margin-top: 0; background: var(--surface);';
-    timeInput.oninput = (e) => { aptDoctorsDraft[idx].time = e.target.value; };
-
+    // 3행: 진료과 / 검사실 장소 입력 (전체 너비)
     const deptInput = document.createElement('input');
     deptInput.className = 'field-input';
-    deptInput.placeholder = isExam ? '검사실/장소' : '진료과/장소';
+    deptInput.placeholder = isExam ? '검사실/장소 (예: 서관 2층 CT실, 동관 4층)' : '진료과/위치 (예: 간이식간담도외과, 본관 1층)';
     deptInput.value = doc.dept || '';
-    deptInput.style.cssText = 'flex: 2; margin-top: 0; background: var(--surface);';
+    deptInput.style.cssText = 'width:100%; margin-top:0; background:var(--surface); color:var(--ink-soft); font-size:0.85rem;';
     deptInput.oninput = (e) => { aptDoctorsDraft[idx].dept = e.target.value; };
+    cardRow.appendChild(deptInput);
 
-    inputsRow.appendChild(nameInput);
-    inputsRow.appendChild(timeInput);
-    inputsRow.appendChild(deptInput);
-
-    cardRow.appendChild(inputsRow);
     wrap.appendChild(cardRow);
   });
 }
@@ -976,6 +1013,38 @@ async function sendAptNotificationNow(apt) {
       })
     });
     alert(`📢 병원 알림을 성공적으로 발송했습니다! (수신 기기: ${res.sentTo || 0}대)`);
+  } catch (err) {
+    alert('알림 발송 중 오류가 발생했습니다: ' + err.message);
+  }
+}
+
+async function sendSingleDoctorNotif(apt, doc) {
+  const patient = state.patients.find((p) => p.id === apt.patientId);
+  const patientName = patient ? patient.name : '가족';
+  const isExam = doc.type === 'exam';
+  const cleanName = (doc.name || '').trim();
+  const displayName = isExam
+    ? (cleanName.endsWith('검사') ? cleanName : `${cleanName} 검사`)
+    : (cleanName.endsWith('교수') ? cleanName : `${cleanName} 교수`);
+  const category = isExam ? '검사' : '진료';
+  const deptText = doc.dept ? ` (${doc.dept})` : '';
+
+  const confirmMsg = `[${category} 일정 알림 보내기]\n\n🏥 ${apt.hospitalName}\n${displayName} (${doc.time}${deptText})\n\n이 일정을 지금 등록된 모든 기기에 알림으로 보낼까요?`;
+  if (!confirm(confirmMsg)) return;
+
+  try {
+    const fasting = apt.fastingRequired ? ' ⚠️ 금식 여부를 꼭 확인하세요!' : '';
+    const note = apt.note ? ` (${apt.note})` : '';
+    const res = await api('/api/send-custom-push', {
+      method: 'POST',
+      body: JSON.stringify({
+        title: `[${category} 안내] ${patientName}님 ${displayName} ⏰`,
+        body: `${patientName}님 ${apt.hospitalName} ${displayName}(${doc.time}${deptText}) 일정입니다. 늦지 않게 준비해주세요!${fasting}${note}`,
+        target: `apt_${apt.id}`,
+        url: `/?target=apt_${apt.id}`
+      })
+    });
+    alert(`🎉 [${displayName}] 알림을 성공적으로 발송했습니다! (수신 기기: ${res.sentTo || 0}대)`);
   } catch (err) {
     alert('알림 발송 중 오류가 발생했습니다: ' + err.message);
   }
@@ -1106,7 +1175,7 @@ function openDietModal(item) {
   document.getElementById('dietNoteInput').value = item ? item.note : '';
   dietStatusDraft = item ? item.status : 'ok';
   renderDietStatusToggles();
-  document.getElementById('dietModal').classList.remove('hidden');
+  openModal('dietModal');
 }
 function renderDietStatusToggles() {
   const wrap = document.getElementById('dietStatusRow');
@@ -1311,7 +1380,7 @@ function openBulkMedModal() {
   bulkItemsDraft = [{ name: '', dosage: '' }, { name: '', dosage: '' }];
   renderBulkDays();
   renderBulkItems();
-  document.getElementById('bulkMedModal').classList.remove('hidden');
+  openModal('bulkMedModal');
 }
 function renderBulkDays() {
   const wrap = document.getElementById('bulkDaysRow');
@@ -1495,7 +1564,7 @@ function openExerciseModal(ex) {
   exerciseDaysDraft = ex ? [...ex.days] : [0, 1, 2, 3, 4, 5, 6];
   renderExerciseTimeChips();
   renderExerciseDayToggles();
-  document.getElementById('exerciseModal').classList.remove('hidden');
+  openModal('exerciseModal');
 }
 function renderExerciseTimeChips() {
   const wrap = document.getElementById('exerciseTimesChips');
@@ -1584,7 +1653,7 @@ function escapeHtml(s) {
 // ---------------- 가족(환자) ----------------
 function openPatientModal() {
   document.getElementById('patientNameInput').value = '';
-  document.getElementById('patientModal').classList.remove('hidden');
+  openModal('patientModal');
 }
 async function savePatient() {
   const name = document.getElementById('patientNameInput').value.trim();
@@ -1641,7 +1710,7 @@ function openMedModal(med) {
   medDaysDraft = med ? [...med.days] : [0, 1, 2, 3, 4, 5, 6];
   renderTimeChips();
   renderDayToggles();
-  document.getElementById('medModal').classList.remove('hidden');
+  openModal('medModal');
 }
 function renderTimeChips() {
   const wrap = document.getElementById('medTimesChips');
@@ -1698,7 +1767,24 @@ async function removeMed(id) {
   render();
 }
 
-function closeModal(id) { document.getElementById(id).classList.add('hidden'); }
+function openModal(id) {
+  const el = document.getElementById(id);
+  if (el) {
+    el.classList.remove('hidden');
+    document.body.style.overflow = 'hidden';
+    const shell = el.querySelector('.modal-shell');
+    if (shell) shell.scrollTop = 0;
+  }
+}
+
+function closeModal(id) {
+  const el = document.getElementById(id);
+  if (el) el.classList.add('hidden');
+  const openModals = document.querySelectorAll('.modal-overlay:not(.hidden)');
+  if (openModals.length === 0) {
+    document.body.style.overflow = '';
+  }
+}
 
 // ---------------- 푸시 알림 ----------------
 function urlBase64ToUint8Array(base64String) {
@@ -1833,6 +1919,15 @@ document.getElementById('exerciseSaveBtn').onclick = saveExercise;
 document.getElementById('reminderSaveBtn').onclick = saveReminderInterval;
 document.querySelectorAll('[data-close-modal]').forEach((btn) => {
   btn.onclick = () => closeModal(btn.getAttribute('data-close-modal'));
+});
+
+// 모달 바깥 어두운 배경(오버레이) 터치 시 닫기
+document.querySelectorAll('.modal-overlay').forEach((overlay) => {
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) {
+      closeModal(overlay.id);
+    }
+  });
 });
 
 
@@ -2142,7 +2237,7 @@ function initManualPush() {
 
   if (openBtn) {
     openBtn.onclick = () => {
-      modal.classList.remove('hidden');
+      openModal('manualPushModal');
     };
   }
 
